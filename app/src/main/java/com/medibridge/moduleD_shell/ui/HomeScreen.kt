@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -334,7 +335,7 @@ private fun HomeTopBar(
             // Paper / bill icon button — opens Bill screen
             IconButton(onClick = onBillClick) {
                 Icon(
-                    imageVector = Icons.Outlined.ReceiptLong,
+                    imageVector = Icons.AutoMirrored.Outlined.ReceiptLong,
                     contentDescription = "Bill Screen",
                     tint = MaterialTheme.colorScheme.onPrimary
                 )
