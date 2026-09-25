@@ -46,7 +46,8 @@ import com.medibridge.core.theme.*
 fun HomeScreen(
     onScannerClick: () -> Unit,
     onChatbotClick: () -> Unit,
-    onReminderClick: () -> Unit
+    onReminderClick: () -> Unit,
+    onSafetyClick: () -> Unit = {}
 ) {
     var showNotificationPanel by remember { mutableStateOf(false) }
     val medications = mockMedications  // TODO: replace with ViewModel StateFlow from Room
@@ -55,7 +56,7 @@ fun HomeScreen(
         topBar = {
             HomeTopBar(
                 onScannerClick = onScannerClick,
-                onNotificationClick = { showNotificationPanel = !showNotificationPanel }
+                onSafetyClick = onSafetyClick
             )
         },
         floatingActionButton = {
@@ -125,7 +126,7 @@ fun HomeScreen(
 @Composable
 private fun HomeTopBar(
     onScannerClick: () -> Unit,
-    onNotificationClick: () -> Unit
+    onSafetyClick: () -> Unit
 ) {
     TopAppBar(
         title = {
@@ -154,21 +155,13 @@ private fun HomeTopBar(
                     tint = MaterialTheme.colorScheme.onPrimary
                 )
             }
-            // Notification/bell icon — opens reminder panel
-            IconButton(onClick = onNotificationClick) {
-                BadgedBox(
-                    badge = {
-                        Badge {
-                            Text("3")  // TODO: wire real unread reminder count
-                        }
-                    }
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Notifications,
-                        contentDescription = "Reminders",
-                        tint = MaterialTheme.colorScheme.onPrimary
-                    )
-                }
+            // Safety / Medication-verification button (Module B)
+            IconButton(onClick = onSafetyClick) {
+                Icon(
+                    imageVector = Icons.Filled.Shield,
+                    contentDescription = "Medication Safety",
+                    tint = MaterialTheme.colorScheme.onPrimary
+                )
             }
         },
         colors = TopAppBarDefaults.topAppBarColors(

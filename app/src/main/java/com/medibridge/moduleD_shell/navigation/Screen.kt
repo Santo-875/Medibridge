@@ -24,8 +24,8 @@ sealed class Screen(val route: String) {
     //     fun createRoute(medId: String) = "prescription_detail/$medId"
     // }
 
-    // ── Module B: Safety (add safety dashboard etc.) ──────────────────────────
-    // object SafetyDashboard : Screen("safety_dashboard")
+    // ── Module B: Safety ─────────────────────────────────────────────────────
+    object SafetyDashboard : Screen("safety_dashboard")
 
     // ── Module C: Schedule (add schedule calendar etc.) ───────────────────────
     // object ScheduleCalendar : Screen("schedule_calendar")
