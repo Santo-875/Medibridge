@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MediBridge</string>
+    <string name="scanner_title">Scan Prescription</string>
+    <string name="reminders_title">Reminders</string>
+    <string name="settings_title">Settings</string>
+    <string name="chatbot_name">Medi</string>
+    <string name="chatbot_subtitle">AI Medication Assistant</string>
+    <string name="btn_scan">Scan Prescription</string>
+    <string name="btn_import_gallery">Import from Gallery</string>
+    <string name="btn_taken">Taken</string>
+    <string name="btn_missed">Missed</string>
+    <string name="btn_snooze">Snooze</string>
+    <string name="label_dark_mode">Dark Mode</string>
+    <string name="label_verified">Verified</string>
+    <string name="label_needs_review">Needs Review</string>
+    <string name="label_conflict">Conflict</string>
+</resources>

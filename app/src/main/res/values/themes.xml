@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base application theme — Compose handles visual styling via MediBridgeTheme.
+         This XML theme is needed only for the activity window chrome (status bar, etc.). -->
+    <style name="Theme.MediBridge" parent="Theme.Material3.DayNight.NoActionBar" />
+</resources>

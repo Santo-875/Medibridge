@@ -1,0 +1,26 @@
+.gradle
+.idea
+/local.properties
+/.android
+/captures
+/keystore.properties
+google-services.json
+
+# Build outputs
+/app/build
+/build
+
+# Android Studio generated files
+*.iml
+*.hprof
+.DS_Store
+
+# Kotlin
+.kotlin
+
+# Local configuration (never commit API keys)
+local.properties
+secrets.properties
+
+# Test results
+/test-results

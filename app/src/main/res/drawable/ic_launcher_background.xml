@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Placeholder mipmap PNG in XML format (works on all API levels).
+     Replace with actual ic_launcher.png assets generated via Android Studio
+     Image Asset Studio for production. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="#0D9488"/>
+</shape>

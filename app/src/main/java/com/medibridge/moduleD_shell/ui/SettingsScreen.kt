@@ -1,0 +1,271 @@
+package com.medibridge.moduleD_shell.ui
+
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import com.medibridge.moduleD_shell.viewmodel.SettingsViewModel
+
+/**
+ * SettingsScreen — app configuration and theme toggle.
+ *
+ * Currently provides:
+ *   • Light / Dark mode toggle (persisted in SettingsViewModel StateFlow)
+ *
+ * FUTURE SETTINGS TO ADD:
+ *   • Notification time preferences (Module C)
+ *   • Language / locale selection
+ *   • User profile / caregiver role switch
+ *   • DataStore persistence for all settings
+ *   • About / version info
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SettingsScreen(viewModel: SettingsViewModel) {
+    val isDarkMode by viewModel.isDarkMode.collectAsState()
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        text       = "Settings",
+                        fontWeight = FontWeight.Bold,
+                        color      = MaterialTheme.colorScheme.onPrimary
+                    )
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.primary
+                )
+            )
+        },
+        containerColor = MaterialTheme.colorScheme.background
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .verticalScroll(rememberScrollState())
+        ) {
+            // ── Appearance section ────────────────────────────────────────────
+            SettingsSectionHeader(title = "Appearance")
+
+            SettingsToggleRow(
+                icon        = if (isDarkMode) Icons.Filled.DarkMode else Icons.Filled.LightMode,
+                title       = "Dark Mode",
+                description = "Switch between light and dark theme",
+                checked     = isDarkMode,
+                onToggle    = { viewModel.toggleDarkMode() }
+            )
+
+            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+
+            // ── Notifications section ──────────────────────────────────────────
+            SettingsSectionHeader(title = "Notifications")
+
+            SettingsInfoRow(
+                icon        = Icons.Filled.NotificationsActive,
+                title       = "Reminder Alerts",
+                description = "Configure via Module C (Schedule Engine)"
+            )
+
+            SettingsInfoRow(
+                icon        = Icons.Filled.VolumeUp,
+                title       = "Alert Sound",
+                description = "Coming in Module C integration"
+            )
+
+            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+
+            // ── Privacy & Access section ───────────────────────────────────────
+            SettingsSectionHeader(title = "Privacy & Access")
+
+            SettingsInfoRow(
+                icon        = Icons.Filled.ManageAccounts,
+                title       = "User Role",
+                description = "Patient · Caregiver · Doctor — future auth layer"
+            )
+
+            SettingsInfoRow(
+                icon        = Icons.Filled.Lock,
+                title       = "Data Visibility",
+                description = "Control which roles see each medication"
+            )
+
+            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+
+            // ── About section ─────────────────────────────────────────────────
+            SettingsSectionHeader(title = "About")
+
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                shape  = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                )
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Filled.LocalHospital,
+                            tint        = MaterialTheme.colorScheme.primary,
+                            contentDescription = null
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            text       = "MediBridge AI",
+                            style      = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color      = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text  = "Version 1.0.0-hackathon-shell",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                    )
+                    Text(
+                        text  = "Branch: integration",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text  = "4-module hackathon shell. Modules: A=Prescription, B=Safety, C=Schedule, D=Shell+Chat",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reusable Settings UI components
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Composable
+private fun SettingsSectionHeader(title: String) {
+    Text(
+        text     = title.uppercase(),
+        style    = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.Bold,
+        color    = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(start = 16.dp, top = 20.dp, bottom = 4.dp)
+    )
+}
+
+@Composable
+private fun SettingsToggleRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    description: String,
+    checked: Boolean,
+    onToggle: () -> Unit
+) {
+    Row(
+        modifier          = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Surface(
+            shape  = RoundedCornerShape(10.dp),
+            color  = MaterialTheme.colorScheme.primaryContainer,
+            modifier = Modifier.size(42.dp)
+        ) {
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                Icon(
+                    imageVector        = icon,
+                    contentDescription = null,
+                    tint               = MaterialTheme.colorScheme.primary,
+                    modifier           = Modifier.size(22.dp)
+                )
+            }
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text       = title,
+                style      = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                color      = MaterialTheme.colorScheme.onBackground
+            )
+            Text(
+                text  = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(
+            checked         = checked,
+            onCheckedChange = { onToggle() },
+            colors          = SwitchDefaults.colors(
+                checkedThumbColor   = MaterialTheme.colorScheme.onPrimary,
+                checkedTrackColor   = MaterialTheme.colorScheme.primary
+            )
+        )
+    }
+}
+
+@Composable
+private fun SettingsInfoRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    description: String
+) {
+    Row(
+        modifier          = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Surface(
+            shape  = RoundedCornerShape(10.dp),
+            color  = MaterialTheme.colorScheme.surfaceVariant,
+            modifier = Modifier.size(42.dp)
+        ) {
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                Icon(
+                    imageVector        = icon,
+                    contentDescription = null,
+                    tint               = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier           = Modifier.size(22.dp)
+                )
+            }
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text       = title,
+                style      = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                color      = MaterialTheme.colorScheme.onBackground
+            )
+            Text(
+                text  = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Icon(
+            imageVector        = Icons.Filled.ChevronRight,
+            contentDescription = null,
+            tint               = MaterialTheme.colorScheme.outline
+        )
+    }
+}
