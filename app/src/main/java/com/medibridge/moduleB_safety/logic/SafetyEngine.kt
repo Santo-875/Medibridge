@@ -181,4 +181,78 @@ object SafetyEngine {
             reviewRecommended = reviewRecommended
         )
     }
+
+    /**
+     * Builds structured input for the AI safety analyzer from evaluation results.
+     */
+    fun buildAiComparisonInput(
+        newMedication: MedicationObject,
+        history: List<MedicationObject>,
+        evaluation: SafetyEvaluationResult
+    ): AiSafetyComparisonInput {
+        val medA = MedicineInfo(newMedication.name, newMedication.strength, newMedication.dose)
+        val findings = mutableListOf<SafetyFinding>()
+
+        if (!evaluation.crossVerified) {
+            findings.add(
+                SafetyFinding(
+                    medicineA = medA,
+                    medicineB = null,
+                    findingType = FindingType.UNVERIFIED,
+                    severity = "MODERATE",
+                    detectedBy = "SafetyEngine",
+                    reason = "Unrecognized medication name in configured local rules",
+                    crossVerified = false,
+                    reviewRecommended = true
+                )
+            )
+        }
+
+        for (conflict in evaluation.conflicts) {
+            val conflictingMed = history.find { it.id == conflict.withMedId }
+            val medB = conflictingMed?.let { MedicineInfo(it.name, it.strength, it.dose) }
+            val (findingType, severity) = when (conflict.type) {
+                CONFLICT_TYPE_DUPLICATE -> FindingType.DUPLICATE to "HIGH"
+                CONFLICT_TYPE_OVERLAP -> FindingType.OVERLAP to "MODERATE"
+                CONFLICT_TYPE_INTERACTION -> FindingType.INTERACTION to "HIGH"
+                else -> FindingType.UNVERIFIED to "MODERATE"
+            }
+            if (findingType != FindingType.UNVERIFIED || evaluation.crossVerified) {
+                findings.add(
+                    SafetyFinding(
+                        medicineA = medA,
+                        medicineB = medB,
+                        findingType = findingType,
+                        severity = severity,
+                        detectedBy = "SafetyEngine",
+                        reason = conflict.detail,
+                        crossVerified = evaluation.crossVerified,
+                        reviewRecommended = evaluation.reviewRecommended
+                    )
+                )
+            }
+        }
+
+        if (findings.isEmpty()) {
+            findings.add(
+                SafetyFinding(
+                    medicineA = medA,
+                    medicineB = null,
+                    findingType = FindingType.SAFE,
+                    severity = "LOW",
+                    detectedBy = "SafetyEngine",
+                    reason = "No conflicts or overlaps detected in configured rules",
+                    crossVerified = true,
+                    reviewRecommended = false
+                )
+            )
+        }
+
+        return AiSafetyComparisonInput(
+            candidateMedicine = medA,
+            findings = findings,
+            crossVerified = evaluation.crossVerified,
+            reviewRecommended = evaluation.reviewRecommended
+        )
+    }
 }

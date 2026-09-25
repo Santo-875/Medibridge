@@ -22,22 +22,28 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.medibridge.core.model.MedicationConflict
 import com.medibridge.core.model.MedicationObject
 import com.medibridge.core.theme.*
+import com.medibridge.moduleB_safety.data.SafetyCheckEntity
+import com.medibridge.moduleB_safety.logic.AiSafetyResponse
 import com.medibridge.moduleB_safety.logic.SafetyEngine
 import com.medibridge.moduleB_safety.logic.SafetyEvaluationResult
 import com.medibridge.moduleB_safety.logic.SafetyRules
 import com.medibridge.moduleB_safety.logic.SafetyVerdict
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * Module B: Medication Safety & Reconciliation Screen.
  *
  * Provides comprehensive cross-verification, duplicate detection, therapeutic overlap checking,
- * and order-independent drug-drug interaction detection.
+ * order-independent drug-drug interaction detection, AI-assisted explanations, and persistent local history.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -140,14 +146,22 @@ fun SafetyScreen(
                 SafetyVerdictBanner(evaluation = evaluation)
             }
 
-            // ── 4. Professional Review Recommendation (if flagged) ───────────
+            // ── 4. AI-Assisted Explanation & Polite Safety Flag ───────────────
+            item {
+                AiExplanationCard(
+                    aiResponse = uiState.aiResponse,
+                    isLoading = uiState.isAiLoading
+                )
+            }
+
+            // ── 5. Professional Review Recommendation (if flagged) ───────────
             if (evaluation.reviewRecommended) {
                 item {
                     ReviewRecommendationBanner()
                 }
             }
 
-            // ── 5. Detected Conflicts Section ────────────────────────────────
+            // ── 6. Deterministic Safety Findings Section ──────────────────────
             item {
                 Text(
                     text = if (evaluation.conflicts.isNotEmpty()) {
@@ -220,7 +234,7 @@ fun SafetyScreen(
                 }
             }
 
-            // ── 6. Medication History Cross-Verification List ───────────────────
+            // ── 7. Medication History Cross-Verification List ───────────────────
             item {
                 Spacer(Modifier.height(6.dp))
                 Text(
@@ -247,7 +261,67 @@ fun SafetyScreen(
                 )
             }
 
-            // ── 7. Prototype Medical Notice Disclaimer ────────────────────────
+            // ── 8. Persistent Safety History Section (Room Database) ───────────
+            item {
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "Safety History (${uiState.savedSafetyHistory.size} saved)",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onBackground
+                        )
+                        Text(
+                            text = "Persisted locally in Room database across sessions",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    if (uiState.savedSafetyHistory.isNotEmpty()) {
+                        TextButton(onClick = { viewModel.clearSafetyHistory() }) {
+                            Icon(
+                                imageVector = Icons.Filled.DeleteSweep,
+                                contentDescription = "Clear History",
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text("Clear")
+                        }
+                    }
+                }
+            }
+
+            if (uiState.savedSafetyHistory.isEmpty()) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                    ) {
+                        Text(
+                            text = "No saved safety checks in local database yet. Evaluating a medication records it here automatically.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(16.dp)
+                        )
+                    }
+                }
+            } else {
+                items(
+                    items = uiState.savedSafetyHistory,
+                    key = { it.id }
+                ) { historyRecord ->
+                    SafetyHistoryCard(record = historyRecord)
+                }
+            }
+
+            // ── 9. Prototype Medical Notice Disclaimer ────────────────────────
             item {
                 Spacer(Modifier.height(8.dp))
                 Surface(
@@ -269,7 +343,7 @@ fun SafetyScreen(
                         )
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            text = "MediBridge Module B Prototype: Evaluated using local deterministic safety rules and configured knowledge base for demonstration. Always verify prescriptions with an authorized physician or pharmacist.",
+                            text = "MediBridge Module B Prototype: Evaluated using deterministic safety rules and local persistence. AI explanations are communication aids and not clinical advice. Always verify prescriptions with an authorized physician or pharmacist.",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             lineHeight = 16.sp
@@ -449,6 +523,117 @@ private fun SafetyVerdictBanner(evaluation: SafetyEvaluationResult) {
                     color = textColor.copy(alpha = 0.9f),
                     lineHeight = 18.sp
                 )
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AI-Assisted Explanation Card
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Composable
+private fun AiExplanationCard(
+    aiResponse: AiSafetyResponse?,
+    isLoading: Boolean
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .shadow(2.dp, RoundedCornerShape(16.dp)),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Filled.SmartToy,
+                        contentDescription = null,
+                        tint = TealPrimary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "AI SAFETY EXPLANATION",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = TealPrimary,
+                        letterSpacing = 0.8.sp
+                    )
+                }
+
+                if (aiResponse != null) {
+                    val (badgeText, badgeBg, badgeTextColor) = when (aiResponse.severity) {
+                        "HIGH" -> Triple("HIGH ATTENTION", StatusConflictBg, StatusConflict)
+                        "MODERATE" -> Triple("REVIEW SUGGESTED", StatusReviewBg, StatusReview)
+                        else -> Triple("ROUTINE", StatusVerifiedBg, StatusVerified)
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = badgeBg
+                    ) {
+                        Text(
+                            text = badgeText,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = badgeTextColor,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
+
+            if (isLoading) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(vertical = 6.dp)
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = TealPrimary
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        text = "Analyzing safety findings with AI...",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else if (aiResponse != null) {
+                Text(
+                    text = aiResponse.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = aiResponse.message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = 18.sp
+                )
+                Spacer(Modifier.height(8.dp))
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                ) {
+                    Text(
+                        text = "Recommendation: ${aiResponse.recommendation}",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
             }
         }
     }
@@ -648,6 +833,93 @@ private fun HistoryMedicationItem(
                         color = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
                     )
                 }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Persistent Safety History Card (Loaded from local Room DB)
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Composable
+private fun SafetyHistoryCard(
+    record: SafetyCheckEntity
+) {
+    val dateFormat = remember {
+        SimpleDateFormat("dd MMM yyyy · hh:mm a", Locale.getDefault())
+    }
+    val (typeBg, typeColor) = when (record.findingType) {
+        "INTERACTION" -> StatusConflictBg to StatusConflict
+        "DUPLICATE", "OVERLAP", "UNVERIFIED" -> StatusReviewBg to StatusReview
+        else -> StatusVerifiedBg to StatusVerified
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .shadow(1.dp, RoundedCornerShape(12.dp)),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "${record.medicineA} + ${record.medicineB}",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Surface(
+                    shape = RoundedCornerShape(4.dp),
+                    color = typeBg
+                ) {
+                    Text(
+                        text = record.findingType,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = typeColor,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(4.dp))
+
+            Text(
+                text = record.aiMessage,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            Spacer(Modifier.height(6.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Recommendation: ${record.aiRecommendation}",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f, fill = false),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = dateFormat.format(Date(record.createdAt)),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                )
             }
         }
     }

@@ -1,20 +1,25 @@
 package com.medibridge.moduleB_safety
 
+import com.medibridge.core.model.MedicationConflict
 import com.medibridge.core.model.MedicationObject
-import com.medibridge.moduleB_safety.logic.MockSafetyRepository
-import com.medibridge.moduleB_safety.logic.SafetyEngine
-import com.medibridge.moduleB_safety.logic.SafetyRules
-import com.medibridge.moduleB_safety.logic.SafetyVerdict
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertTrue
+import com.medibridge.core.model.ScheduleSlot
+import com.medibridge.moduleB_safety.data.SafetyCheckDao
+import com.medibridge.moduleB_safety.data.SafetyCheckEntity
+import com.medibridge.moduleB_safety.data.SafetyRepository
+import com.medibridge.moduleB_safety.logic.*
+import com.medibridge.moduleB_safety.logic.fallback.FallbackSafetyAnalyzer
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.runBlocking
+import org.junit.Assert.*
 import org.junit.Test
 
 class SafetyEngineTest {
 
     private val baselineHistory = MockSafetyRepository.baselineHistory
 
+    // ── 1. Safe Medication Test ──────────────────────────────────────────────
     @Test
     fun testCase1_SafeMedication_passesVerificationWithoutConflicts() {
         val safeScenario = MockSafetyRepository.demoScenarios.first { it.id == "case-1" }
@@ -29,6 +34,7 @@ class SafetyEngineTest {
         assertEquals("No Known Conflict Detected", result.headline)
     }
 
+    // ── 2. Duplicate Detection Test ──────────────────────────────────────────
     @Test
     fun testCase2_DuplicateMedication_detectedSuccessfully() {
         val duplicateScenario = MockSafetyRepository.demoScenarios.first { it.id == "case-2" }
@@ -41,6 +47,7 @@ class SafetyEngineTest {
         assertTrue(result.conflicts.any { it.withMedId == "hist-001" })
     }
 
+    // ── 3. Overlap Detection Test ────────────────────────────────────────────
     @Test
     fun testCase3_TherapeuticOverlap_detectedSuccessfully() {
         val overlapScenario = MockSafetyRepository.demoScenarios.first { it.id == "case-3" }
@@ -55,6 +62,7 @@ class SafetyEngineTest {
         assertTrue(overlapConflict?.detail?.contains("ACE Inhibitor") == true)
     }
 
+    // ── 4. Interaction Detection Test ────────────────────────────────────────
     @Test
     fun testCase4_DrugInteraction_detectedSuccessfully() {
         val interactionScenario = MockSafetyRepository.demoScenarios.first { it.id == "case-4" }
@@ -69,6 +77,7 @@ class SafetyEngineTest {
         assertTrue(interactionConflict?.detail?.contains("bleeding") == true)
     }
 
+    // ── 5. Unknown Medicine Test ─────────────────────────────────────────────
     @Test
     fun testCase5_UnknownMedication_flagsUnverifiedAndRequiresReview() {
         val unknownScenario = MockSafetyRepository.demoScenarios.first { it.id == "case-5" }
@@ -82,6 +91,7 @@ class SafetyEngineTest {
         assertTrue(result.updatedMedication.reviewRecommended)
     }
 
+    // ── 6. Normalization Tests ───────────────────────────────────────────────
     @Test
     fun testNormalization_caseInsensitiveMatching() {
         val candidate = baselineHistory[0].copy(
@@ -106,6 +116,7 @@ class SafetyEngineTest {
             result.conflicts.any { it.type == SafetyEngine.CONFLICT_TYPE_DUPLICATE })
     }
 
+    // ── 7. Order-Independent Interaction Test ────────────────────────────────
     @Test
     fun testInteraction_orderIndependentMatching() {
         val rule1 = SafetyRules.findInteraction("Amlodipine", "Lisinopril")
@@ -122,6 +133,131 @@ class SafetyEngineTest {
         assertEquals(aspirnWrf1, aspirnWrf2)
     }
 
+    // ── 8. AI Input Construction Test ────────────────────────────────────────
+    @Test
+    fun testAiInputConstruction_structuredCorrectly() {
+        val scenario = MockSafetyRepository.demoScenarios.first { it.id == "case-4" } // Aspirin vs Warfarin
+        val evaluation = SafetyEngine.evaluateSafety(scenario.candidateMedication, baselineHistory)
+        val aiInput = SafetyEngine.buildAiComparisonInput(scenario.candidateMedication, baselineHistory, evaluation)
+
+        assertEquals("Aspirin", aiInput.candidateMedicine.name)
+        assertTrue(aiInput.crossVerified)
+        assertTrue(aiInput.reviewRecommended)
+        assertTrue(aiInput.findings.isNotEmpty())
+        assertEquals(FindingType.INTERACTION, aiInput.findings[0].findingType)
+        assertEquals("Warfarin", aiInput.findings[0].medicineB?.name)
+        assertEquals("HIGH", aiInput.findings[0].severity)
+    }
+
+    // ── 9. AI Fallback Behavior & Polite Language Test ───────────────────────
+    @Test
+    fun testAiFallbackBehavior_politeLanguageAndFlags() {
+        val scenario = MockSafetyRepository.demoScenarios.first { it.id == "case-4" }
+        val evaluation = SafetyEngine.evaluateSafety(scenario.candidateMedication, baselineHistory)
+        val aiInput = SafetyEngine.buildAiComparisonInput(scenario.candidateMedication, baselineHistory, evaluation)
+
+        val aiResponse = FallbackSafetyAnalyzer.generatePoliteExplanation(aiInput)
+
+        assertTrue(aiResponse.flagged)
+        assertTrue(aiResponse.isFallback)
+        assertEquals("HIGH", aiResponse.severity)
+        assertTrue("Message must be polite and action-oriented", aiResponse.message.contains("confirm this combination with your doctor or pharmacist"))
+        assertFalse("Message must avoid aggressive alarmist words", aiResponse.message.contains("DANGEROUS"))
+        assertFalse("Message must avoid aggressive alarmist words", aiResponse.message.contains("STOP TAKING"))
+    }
+
+    @Test
+    fun testGeminiSafetyAnalyzer_usesFallbackWhenKeyIsPlaceholder() = runBlocking {
+        val analyzer = GeminiSafetyAnalyzer(apiKey = "YOUR_GEMINI_API_KEY_HERE")
+        val scenario = MockSafetyRepository.demoScenarios.first { it.id == "case-1" } // Safe
+        val evaluation = SafetyEngine.evaluateSafety(scenario.candidateMedication, baselineHistory)
+        val aiInput = SafetyEngine.buildAiComparisonInput(scenario.candidateMedication, baselineHistory, evaluation)
+
+        val response = analyzer.analyzeSafety(aiInput)
+        assertFalse(response.flagged)
+        assertEquals("LOW", response.severity)
+        assertTrue(response.isFallback)
+        assertTrue(response.title.contains("No known conflicts"))
+    }
+
+    // ── 10. Multiple Findings Handling Test ──────────────────────────────────
+    @Test
+    fun testMultipleFindings_combinedExplanation() {
+        // Candidate medicine with multiple conflicts: Ibuprofen interacts with Warfarin AND Lisinopril
+        val multiConflictMed = MedicationObject(
+            id = "test-multi",
+            name = "Ibuprofen",
+            strength = "400mg",
+            dose = "1 tablet",
+            frequency = "As needed",
+            timing = "With food",
+            duration = "5 days",
+            confidence = 0.95f,
+            needsVerification = false,
+            verifiedByUser = true,
+            crossVerified = false,
+            conflicts = emptyList(),
+            reviewRecommended = false,
+            schedule = emptyList(),
+            adherence = emptyList(),
+            summary = "NSAID pain reliever",
+            sideEffects = emptyList(),
+            visibleTo = listOf("patient")
+        )
+
+        val evaluation = SafetyEngine.evaluateSafety(multiConflictMed, baselineHistory)
+        assertTrue("Should detect at least 2 conflicts for Ibuprofen with Lisinopril & Warfarin", evaluation.conflicts.size >= 2)
+
+        val aiInput = SafetyEngine.buildAiComparisonInput(multiConflictMed, baselineHistory, evaluation)
+        assertTrue(aiInput.hasMultipleFindings)
+
+        val aiResponse = FallbackSafetyAnalyzer.generatePoliteExplanation(aiInput)
+        assertTrue(aiResponse.flagged)
+        assertTrue("Should produce combined explanation for multiple findings", aiResponse.title.contains("Multiple"))
+        assertTrue(aiResponse.message.contains("Lisinopril") || aiResponse.message.contains("Warfarin"))
+    }
+
+    // ── 11. Database Insert & Retrieval via Repository Test ──────────────────
+    @Test
+    fun testDatabasePersistenceAndRetrieval() = runBlocking {
+        val fakeDao = FakeSafetyCheckDao()
+        val repository = SafetyRepository(fakeDao)
+
+        val scenario = MockSafetyRepository.demoScenarios.first { it.id == "case-4" }
+        val evaluation = SafetyEngine.evaluateSafety(scenario.candidateMedication, baselineHistory)
+        val aiResponse = FallbackSafetyAnalyzer.generatePoliteExplanation(
+            SafetyEngine.buildAiComparisonInput(scenario.candidateMedication, baselineHistory, evaluation)
+        )
+
+        // Persist evaluation
+        val saved = repository.persistSafetyEvaluation(
+            evaluation = evaluation,
+            aiResponse = aiResponse,
+            candidateMed = scenario.candidateMedication,
+            history = baselineHistory
+        )
+
+        assertEquals(1, saved.size)
+        assertEquals("Aspirin", saved[0].medicineA)
+        assertEquals("Warfarin", saved[0].medicineB)
+        assertEquals("INTERACTION", saved[0].findingType)
+
+        // Retrieve from repository
+        val directHistory = repository.getSafetyHistoryDirect()
+        assertEquals(1, directHistory.size)
+        assertEquals("Aspirin", directHistory[0].medicineA)
+        assertEquals(aiResponse.title, directHistory[0].aiTitle)
+
+        // Test Flow retrieval
+        val flowHistory = repository.getSafetyHistory().first()
+        assertEquals(1, flowHistory.size)
+
+        // Test Clear history
+        repository.clearHistory()
+        val clearedHistory = repository.getSafetyHistoryDirect()
+        assertTrue(clearedHistory.isEmpty())
+    }
+
     @Test
     fun testReviewRecommended_isDeterministic() {
         val safeScenario = MockSafetyRepository.demoScenarios[0]
@@ -136,5 +272,36 @@ class SafetyEngineTest {
         val dupResult2 = SafetyEngine.evaluateSafety(dupScenario.candidateMedication, baselineHistory)
         assertEquals(dupResult1.reviewRecommended, dupResult2.reviewRecommended)
         assertTrue(dupResult1.reviewRecommended)
+    }
+
+    // In-memory fake DAO implementation for isolated repository unit testing
+    private class FakeSafetyCheckDao : SafetyCheckDao {
+        private val records = mutableListOf<SafetyCheckEntity>()
+
+        override suspend fun insertSafetyCheck(safetyCheck: SafetyCheckEntity) {
+            records.add(0, safetyCheck)
+        }
+
+        override suspend fun insertAll(safetyChecks: List<SafetyCheckEntity>) {
+            records.addAll(0, safetyChecks)
+        }
+
+        override fun getAllSafetyChecks(): Flow<List<SafetyCheckEntity>> = flowOf(records.toList())
+
+        override fun getRecentSafetyChecks(limit: Int): Flow<List<SafetyCheckEntity>> =
+            flowOf(records.take(limit))
+
+        override suspend fun getAllSafetyChecksDirect(): List<SafetyCheckEntity> = records.toList()
+
+        override suspend fun getSafetyCheckById(id: String): SafetyCheckEntity? =
+            records.find { it.id == id }
+
+        override suspend fun deleteById(id: String) {
+            records.removeAll { it.id == id }
+        }
+
+        override suspend fun deleteAll() {
+            records.clear()
+        }
     }
 }

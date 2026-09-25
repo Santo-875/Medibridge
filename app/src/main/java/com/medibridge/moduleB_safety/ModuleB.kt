@@ -40,4 +40,19 @@ object ModuleB {
     ): MedicationObject {
         return SafetyEngine.evaluateSafety(newMedication, history).updatedMedication
     }
+
+    /**
+     * Evaluates safety deterministically and generates polite AI natural language
+     * contextualization and safety flags.
+     */
+    suspend fun evaluateWithAi(
+        newMedication: MedicationObject,
+        history: List<MedicationObject>,
+        aiAnalyzer: com.medibridge.moduleB_safety.logic.AiSafetyAnalyzer = com.medibridge.moduleB_safety.logic.GeminiSafetyAnalyzer()
+    ): Pair<SafetyEvaluationResult, com.medibridge.moduleB_safety.logic.AiSafetyResponse> {
+        val evaluation = SafetyEngine.evaluateSafety(newMedication, history)
+        val aiInput = SafetyEngine.buildAiComparisonInput(newMedication, history, evaluation)
+        val aiResponse = aiAnalyzer.analyzeSafety(aiInput)
+        return Pair(evaluation, aiResponse)
+    }
 }
