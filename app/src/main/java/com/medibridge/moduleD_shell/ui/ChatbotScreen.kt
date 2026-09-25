@@ -27,6 +27,11 @@ import java.util.UUID
  *
  * TODO: Module D wires AI chat API (Retrofit) here.
  * TODO: Module D/A — parse intents from user messages to trigger prescription scans.
+ *
+ * STUB / NOTE:
+ * Medi reads from shared MedicationObject history — populated by Module 1 (voice sessions),
+ * read by Module 2 (safety) and Module 3 (schedule/summary), always reflects latest state.
+ * No new UI needed, just wire data source later.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

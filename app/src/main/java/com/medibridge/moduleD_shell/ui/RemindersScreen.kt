@@ -169,6 +169,7 @@ private fun ReminderCard(reminder: ReminderItem) {
                 Spacer(Modifier.height(10.dp))
 
                 // Action buttons (UI only — wire to AlarmManager/WorkManager in Module C/D)
+                // TODO: Module C - missed state should be inferred automatically if time passes with no action
                 if (reminder.status == ReminderStatus.PENDING) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         // Taken button
@@ -199,22 +200,6 @@ private fun ReminderCard(reminder: ReminderItem) {
                             Icon(Icons.Filled.Snooze, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
                             Text("Snooze", style = MaterialTheme.typography.labelMedium)
-                        }
-
-                        // Missed button
-                        OutlinedButton(
-                            onClick = {
-                                // TODO: Module C/D — mark dose as missed in DB
-                                // dao.markAdherence(reminder.id, date = today(), status = "missed")
-                            },
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = StatusConflict
-                            ),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Missed", style = MaterialTheme.typography.labelMedium)
                         }
                     }
                 } else {

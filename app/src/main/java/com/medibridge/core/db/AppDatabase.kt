@@ -21,7 +21,7 @@ import androidx.room.RoomDatabase
  */
 @Database(
     entities = [MedicationEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = false  // Set to true + provide schemaDirectory for production
 )
 abstract class AppDatabase : RoomDatabase() {

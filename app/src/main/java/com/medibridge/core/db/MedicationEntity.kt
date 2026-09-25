@@ -64,5 +64,23 @@ data class MedicationEntity(
     val visibleTo: String,
 
     /** Optional prescription image URL/path (set by Module A). */
-    val imageUrl: String? = null
+    val imageUrl: String? = null,
+
+    /** Tracks how this record entered system ("bill" or "voice"). */
+    val sourceType: String = "bill",
+
+    /** Voice-to-text transcribed summary from voice sessions. */
+    val consultationNotes: String = "",
+
+    /** Reference to mock bill image/data. */
+    val billImageUrl: String? = null,
+
+    /** Caretaker contact phone number. */
+    val caretakerPhone: String? = null,
+
+    /** Status of phone call reminders ("not_set", "pending_verification", "verified", "scheduled"). */
+    val callReminderStatus: String = "not_set",
+
+    /** JSON string map keyed by role ("doctor", "caretaker", "pharmacy") holding role-specific summaries. */
+    val privacySummary: String = "{}"
 )

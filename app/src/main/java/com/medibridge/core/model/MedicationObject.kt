@@ -137,7 +137,26 @@ data class MedicationObject(
 
     // ── Media ─────────────────────────────────────────────────────────────────
     /** Optional URL/path for the prescription image (set by Module A). */
-    val imageUrl: String? = null
+    val imageUrl: String? = null,
+
+    // ── Extended Integration Fields (Modules A, C, D, E) ──────────────────────
+    /** Tracks how this record entered system ("bill" or "voice"). */
+    val sourceType: String = "bill",
+
+    /** Voice-to-text transcribed summary from voice sessions (Module 1 / A). */
+    val consultationNotes: String = "",
+
+    /** Reference to mock bill image/data (Module A). */
+    val billImageUrl: String? = null,
+
+    /** Contact phone number for call reminders (Module E). */
+    val caretakerPhone: String? = null,
+
+    /** Call reminder status ("not_set", "pending_verification", "verified", "scheduled") (Module E). */
+    val callReminderStatus: String = "not_set",
+
+    /** Map keyed by role ("doctor", "caretaker", "pharmacy") holding role-specific summaries (Module D RBAC + Module C). */
+    val privacySummary: Map<String, String> = emptyMap()
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -166,7 +185,13 @@ fun MedicationObject.toEntity(): MedicationEntity = MedicationEntity(
     summary = summary,
     sideEffects = gson.toJson(sideEffects),
     visibleTo = gson.toJson(visibleTo),
-    imageUrl = imageUrl
+    imageUrl = imageUrl,
+    sourceType = sourceType,
+    consultationNotes = consultationNotes,
+    billImageUrl = billImageUrl,
+    caretakerPhone = caretakerPhone,
+    callReminderStatus = callReminderStatus,
+    privacySummary = gson.toJson(privacySummary)
 )
 
 /** Converts a [MedicationEntity] (Room row) back to a [MedicationObject]. */
@@ -175,6 +200,7 @@ fun MedicationEntity.fromEntity(): MedicationObject {
     val scheduleType = object : TypeToken<List<ScheduleSlot>>() {}.type
     val adherenceType = object : TypeToken<List<AdherenceRecord>>() {}.type
     val stringListType = object : TypeToken<List<String>>() {}.type
+    val mapType = object : TypeToken<Map<String, String>>() {}.type
 
     return MedicationObject(
         id = id,
@@ -195,7 +221,13 @@ fun MedicationEntity.fromEntity(): MedicationObject {
         summary = summary,
         sideEffects = gson.fromJson(sideEffects, stringListType) ?: emptyList(),
         visibleTo = gson.fromJson(visibleTo, stringListType) ?: emptyList(),
-        imageUrl = imageUrl
+        imageUrl = imageUrl,
+        sourceType = sourceType,
+        consultationNotes = consultationNotes,
+        billImageUrl = billImageUrl,
+        caretakerPhone = caretakerPhone,
+        callReminderStatus = callReminderStatus,
+        privacySummary = gson.fromJson(privacySummary, mapType) ?: emptyMap()
     )
 }
 
@@ -226,7 +258,17 @@ val mockMedications: List<MedicationObject> = listOf(
         summary = "Controls blood sugar. Take with food to reduce stomach upset.",
         sideEffects = listOf("Nausea", "Diarrhea", "Stomach pain"),
         visibleTo = listOf("patient", "doctor"),
-        imageUrl = null
+        imageUrl = null,
+        sourceType = "bill",
+        consultationNotes = "Patient confirmed routine usage with meals.",
+        billImageUrl = null,
+        caretakerPhone = "+15550199",
+        callReminderStatus = "verified",
+        privacySummary = mapOf(
+            "doctor" to "Doctor view: full medication history + conflicts",
+            "caretaker" to "Caretaker view: schedule adherence & emergency info",
+            "pharmacy" to "Pharmacy view: active prescriptions & refill status"
+        )
     ),
     MedicationObject(
         id = "med-002",
@@ -249,7 +291,17 @@ val mockMedications: List<MedicationObject> = listOf(
         summary = "Blood pressure medication. Avoid grapefruit juice.",
         sideEffects = listOf("Swelling of ankles", "Headache", "Flushing"),
         visibleTo = listOf("patient", "caregiver", "doctor"),
-        imageUrl = null
+        imageUrl = null,
+        sourceType = "voice",
+        consultationNotes = "Doctor noted potential blood pressure drop with Lisinopril.",
+        billImageUrl = null,
+        caretakerPhone = null,
+        callReminderStatus = "not_set",
+        privacySummary = mapOf(
+            "doctor" to "Doctor view: full medication history + conflicts",
+            "caretaker" to "Caretaker view: schedule adherence & emergency info",
+            "pharmacy" to "Pharmacy view: active prescriptions & refill status"
+        )
     ),
     MedicationObject(
         id = "med-003",
@@ -270,7 +322,17 @@ val mockMedications: List<MedicationObject> = listOf(
         summary = "ACE inhibitor for heart & BP. Low AI confidence — please verify dose.",
         sideEffects = listOf("Dry cough", "Dizziness", "High potassium"),
         visibleTo = listOf("patient"),
-        imageUrl = null
+        imageUrl = null,
+        sourceType = "bill",
+        consultationNotes = "",
+        billImageUrl = null,
+        caretakerPhone = null,
+        callReminderStatus = "not_set",
+        privacySummary = mapOf(
+            "doctor" to "Doctor view: full medication history + conflicts",
+            "caretaker" to "Caretaker view: schedule adherence & emergency info",
+            "pharmacy" to "Pharmacy view: active prescriptions & refill status"
+        )
     ),
     MedicationObject(
         id = "med-004",
@@ -291,6 +353,16 @@ val mockMedications: List<MedicationObject> = listOf(
         summary = "Supplement for bone health and immunity.",
         sideEffects = listOf("Rare at normal doses"),
         visibleTo = listOf("patient"),
-        imageUrl = null
+        imageUrl = null,
+        sourceType = "voice",
+        consultationNotes = "Daily supplement recommended by physician.",
+        billImageUrl = null,
+        caretakerPhone = null,
+        callReminderStatus = "not_set",
+        privacySummary = mapOf(
+            "doctor" to "Doctor view: full medication history + conflicts",
+            "caretaker" to "Caretaker view: schedule adherence & emergency info",
+            "pharmacy" to "Pharmacy view: active prescriptions & refill status"
+        )
     )
 )

@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import com.medibridge.moduleD_shell.ui.BillScreen
 import com.medibridge.moduleD_shell.ui.ChatbotScreen
 import com.medibridge.moduleD_shell.ui.HomeScreen
 import com.medibridge.moduleD_shell.ui.RemindersScreen
@@ -39,6 +40,7 @@ fun MediBridgeNavGraph(
         composable(Screen.Home.route) {
             HomeScreen(
                 onScannerClick = { navController.navigate(Screen.Scanner.route) },
+                onBillClick = { navController.navigate(Screen.Bill.route) },
                 onChatbotClick = { navController.navigate(Screen.Chatbot.route) },
                 onReminderClick = { navController.navigate(Screen.Reminders.route) }
             )
@@ -56,7 +58,15 @@ fun MediBridgeNavGraph(
             SettingsScreen(viewModel = settingsViewModel)
         }
 
-        // ── Module A: Scanner (stub) ──────────────────────────────────────────
+        // ── Module A: Bill Screen ─────────────────────────────────────────────
+        composable(Screen.Bill.route) {
+            BillScreen(
+                onBack = { navController.popBackStack() }
+                // TODO: Module A wires OCR camera / bill parsing here
+            )
+        }
+
+        // ── Module A: Scanner Screen ──────────────────────────────────────────
         composable(Screen.Scanner.route) {
             ScannerScreen(
                 onBack = { navController.popBackStack() }
