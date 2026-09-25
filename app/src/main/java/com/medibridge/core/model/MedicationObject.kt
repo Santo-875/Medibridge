@@ -54,7 +54,9 @@ data class AdherenceRecord(
     /** ISO date string e.g. "2024-11-01" */
     val date: String,
     /** "taken" | "missed" | "snoozed" */
-    val status: String
+    val status: String,
+    /** Optional dose slot time e.g. "08:00" to uniquely distinguish multiple doses on the same day */
+    val slotTime: String? = null
 )
 
 /**

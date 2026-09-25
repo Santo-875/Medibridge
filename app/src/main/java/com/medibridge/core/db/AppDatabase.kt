@@ -20,13 +20,14 @@ import androidx.room.RoomDatabase
  *   Add new @Entity classes to the [entities] array and bump the version.
  */
 @Database(
-    entities = [MedicationEntity::class],
-    version = 2,
+    entities = [MedicationEntity::class, PatientSummaryEntity::class],
+    version = 3,
     exportSchema = false  // Set to true + provide schemaDirectory for production
 )
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun medicationDao(): MedicationDao
+    abstract fun patientSummaryDao(): PatientSummaryDao
 
     companion object {
         @Volatile
