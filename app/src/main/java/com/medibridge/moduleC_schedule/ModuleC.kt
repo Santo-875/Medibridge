@@ -1,35 +1,36 @@
 package com.medibridge.moduleC_schedule
 
+import android.content.Context
+import com.medibridge.core.db.AppDatabase
+import com.medibridge.moduleC_schedule.ai.PatientSummaryService
+import com.medibridge.moduleC_schedule.ai.PrivacySummaryService
+import com.medibridge.moduleC_schedule.ai.SideEffectService
+import com.medibridge.moduleC_schedule.engine.ScheduleEngine
+import com.medibridge.moduleC_schedule.reminder.ReminderManager
+import com.medibridge.moduleC_schedule.repository.ScheduleRepository
+import com.medibridge.moduleC_schedule.tts.ReminderTtsHelper
+
 /**
  * ─────────────────────────────────────────────────────────────────────────────
- * MODULE C — Schedule Engine & Adherence Tracker (STUB)
+ * MODULE C — Schedule Engine, Adherence Tracker & Gemini AI Services
  * ─────────────────────────────────────────────────────────────────────────────
  *
- * This package is reserved for Module C: medication scheduling, reminder
- * notifications, and adherence tracking.
- *
- * INTEGRATION CHECKLIST FOR MODULE C DEVELOPER:
- *   □ Create ScheduleRepository(dao: MedicationDao) — reads/writes schedule + adherence
- *   □ Create ScheduleEngine.kt — generates ScheduleSlot list from frequency/timing fields
- *   □ Create ReminderManager.kt — wraps AlarmManager or WorkManager for notifications
- *   □ Create ScheduleViewModel.kt — exposes today's schedule as StateFlow
- *   □ Wire RemindersScreen "Taken / Missed / Snooze" onClick handlers (see RemindersScreen.kt TODOs)
- *   □ Write adherence: dao.upsertMedication(med.copy(adherence = updatedList.toJsonString()))
- *   □ Create ScheduleCalendarScreen.kt if a calendar view is needed
- *
- * KEY CONTRACT:
- *   Schedule field (MedicationObject.schedule):  List<ScheduleSlot>
- *     ScheduleSlot(time="08:00", slot="Morning", withFood=true)
- *
- *   Adherence field (MedicationObject.adherence): List<AdherenceRecord>
- *     AdherenceRecord(date="2024-11-01", status="taken")
- *     status values: "taken" | "missed" | "snoozed"
- *
- * NOTIFICATION CHANNEL IDs (register in Application class or Activity):
- *   "MEDICATION_REMINDER"  — standard dose reminders
- *   "CONFLICT_ALERT"       — safety conflict warnings (Module B triggers)
- *
- * DO NOT add new medication fields outside core.model.MedicationObject
- * ─────────────────────────────────────────────────────────────────────────────
+ * Implemented components:
+ *   1. [ScheduleEngine] — Dynamic prescription frequency & timing parser into [ScheduleSlot].
+ *   2. [ReminderManager] — AlarmManager & NotificationManager reminder scheduling.
+ *   3. [ScheduleRepository] — Adherence tracking (Taken / Snooze / Auto-Missed).
+ *   4. [SideEffectService] — Gemini AI structured side-effect retriever.
+ *   5. [PatientSummaryService] — Gemini AI patient summary generator & Room DB storage.
+ *   6. [PrivacySummaryService] — Gemini AI role-based privacy content generator.
+ *   7. [ReminderTtsHelper] — On-device English and Tamil voice reminders.
+ *   8. [viewmodel.ScheduleViewModel] — Bridge for Module D RemindersScreen integration.
  */
-// Stub — Module C implementation files go here.
+class ModuleC(context: Context) {
+    val database = AppDatabase.getInstance(context)
+    val reminderManager = ReminderManager(context)
+    val scheduleRepository = ScheduleRepository(database.medicationDao(), reminderManager)
+    val sideEffectService = SideEffectService()
+    val patientSummaryService = PatientSummaryService(database.patientSummaryDao(), sideEffectService)
+    val privacySummaryService = PrivacySummaryService()
+    val ttsHelper = ReminderTtsHelper(context)
+}
