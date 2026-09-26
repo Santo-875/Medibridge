@@ -17,7 +17,21 @@ android {
         versionName = "1.0.0-hackathon-shell"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        buildConfigField("String", "BACKEND_BASE_URL", "\"http://10.0.2.2:8000/\"")
+
+        val envFile = rootProject.file(".env")
+        var envBackendUrl = "http://10.0.2.2:8000/"
+        if (envFile.exists()) {
+            envFile.forEachLine { line ->
+                val trimmed = line.trim()
+                if (trimmed.startsWith("BACKEND_URL=")) {
+                    val url = trimmed.substringAfter("=").trim().trim('"', '\'')
+                    if (url.isNotEmpty()) {
+                        envBackendUrl = if (url.endsWith("/")) url else "$url/"
+                    }
+                }
+            }
+        }
+        buildConfigField("String", "BACKEND_BASE_URL", "\"$envBackendUrl\"")
     }
 
     buildTypes {

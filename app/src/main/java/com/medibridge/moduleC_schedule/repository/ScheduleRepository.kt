@@ -85,7 +85,8 @@ class ScheduleRepository(
                             dose = displayDose,
                             status = status,
                             adherenceStreak = takenCount,
-                            adherencePercent = percent
+                            adherencePercent = percent,
+                            caretakerPhone = med.caretakerPhone
                         )
                     )
                 }
@@ -138,54 +139,122 @@ class ScheduleRepository(
      * 1. Updates/stores adherence record.
      * 2. Prevents duplicates for the same occurrence.
      * 3. Cancels active reminder and notification.
-     * 4. Persists to Room DB.
+     * 4. Persists to Room DB (creates separate entry if not present).
      */
-    suspend fun markTaken(medicationId: String, slotTime: String, date: String = todayIso()) = withContext(Dispatchers.IO) {
-        val entity = medicationDao.getMedicationById(medicationId) ?: return@withContext
-        val med = entity.fromEntity()
-
-        val updatedAdherence = updateAdherenceList(
-            currentList = med.adherence,
-            date = date,
-            slotTime = slotTime,
-            newStatus = "taken"
-        )
-
-        val updatedMed = med.copy(adherence = updatedAdherence)
-        medicationDao.upsertMedication(updatedMed.toEntity())
+    suspend fun markTaken(
+        medicationId: String,
+        slotTime: String,
+        date: String = todayIso(),
+        medicineName: String? = null,
+        dose: String? = null
+    ) = withContext(Dispatchers.IO) {
+        val entity = medicationDao.getMedicationById(medicationId)
+        if (entity != null) {
+            val med = entity.fromEntity()
+            val updatedAdherence = updateAdherenceList(
+                currentList = med.adherence,
+                date = date,
+                slotTime = slotTime,
+                newStatus = "taken"
+            )
+            val updatedMed = med.copy(adherence = updatedAdherence)
+            medicationDao.upsertMedication(updatedMed.toEntity())
+        } else {
+            // Create separately in DB if not found
+            val newMed = MedicationObject(
+                id = medicationId,
+                name = medicineName ?: "Medication",
+                strength = "Standard",
+                dose = dose ?: "1 tablet",
+                frequency = "Daily",
+                timing = "As scheduled",
+                duration = "Ongoing",
+                confidence = 1.0f,
+                needsVerification = false,
+                verifiedByUser = true,
+                crossVerified = true,
+                conflicts = emptyList(),
+                reviewRecommended = false,
+                schedule = listOf(ScheduleSlot(time = slotTime, slot = "Scheduled", withFood = false)),
+                adherence = listOf(AdherenceRecord(date = date, status = "taken", slotTime = slotTime)),
+                summary = "Tablet Taken at $slotTime.",
+                sideEffects = emptyList(),
+                visibleTo = listOf("patient", "caregiver", "doctor"),
+                caretakerPhone = "+65 9123 4567"
+            )
+            medicationDao.upsertMedication(newMed.toEntity())
+        }
 
         reminderManager?.cancelReminder(medicationId, slotTime, date)
-        Log.i(TAG, "Marked TAKEN: ${med.name} at $slotTime on $date")
+        Log.i(TAG, "Marked TAKEN: $medicationId at $slotTime on $date")
     }
 
     /**
      * Marks a medication occurrence as "MISSED" and triggers caretaker call escalation if scheduled.
+     * Persists to Room DB (creates separate entry if not present).
      */
-    suspend fun markMissed(medicationId: String, slotTime: String, date: String = todayIso()) = withContext(Dispatchers.IO) {
-        val entity = medicationDao.getMedicationById(medicationId) ?: return@withContext
-        val med = entity.fromEntity()
+    suspend fun markMissed(
+        medicationId: String,
+        slotTime: String,
+        date: String = todayIso(),
+        medicineName: String? = null,
+        dose: String? = null
+    ) = withContext(Dispatchers.IO) {
+        val entity = medicationDao.getMedicationById(medicationId)
+        if (entity != null) {
+            val med = entity.fromEntity()
+            val updatedAdherence = updateAdherenceList(
+                currentList = med.adherence,
+                date = date,
+                slotTime = slotTime,
+                newStatus = "missed"
+            )
+            val updatedMed = med.copy(adherence = updatedAdherence)
+            medicationDao.upsertMedication(updatedMed.toEntity())
 
-        val updatedAdherence = updateAdherenceList(
-            currentList = med.adherence,
-            date = date,
-            slotTime = slotTime,
-            newStatus = "missed"
-        )
+            if (!med.caretakerPhone.isNullOrBlank() && med.callReminderStatus == "scheduled") {
+                reminderManager?.triggerCaretakerCallEscalation(
+                    medicationId = med.id,
+                    medicineName = med.name,
+                    caretakerPhone = med.caretakerPhone,
+                    dose = med.dose
+                )
+            }
+        } else {
+            // Create separately in DB if not found
+            val newMed = MedicationObject(
+                id = medicationId,
+                name = medicineName ?: "Medication",
+                strength = "Standard",
+                dose = dose ?: "1 tablet",
+                frequency = "Daily",
+                timing = "As scheduled",
+                duration = "Ongoing",
+                confidence = 1.0f,
+                needsVerification = false,
+                verifiedByUser = true,
+                crossVerified = true,
+                conflicts = emptyList(),
+                reviewRecommended = false,
+                schedule = listOf(ScheduleSlot(time = slotTime, slot = "Scheduled", withFood = false)),
+                adherence = listOf(AdherenceRecord(date = date, status = "missed", slotTime = slotTime)),
+                summary = "Tablet Missed at $slotTime. Caretaker notified.",
+                sideEffects = emptyList(),
+                visibleTo = listOf("patient", "caregiver", "doctor"),
+                caretakerPhone = "+65 9123 4567"
+            )
+            medicationDao.upsertMedication(newMed.toEntity())
 
-        val updatedMed = med.copy(adherence = updatedAdherence)
-        medicationDao.upsertMedication(updatedMed.toEntity())
-
-        reminderManager?.cancelReminder(medicationId, slotTime, date)
-        Log.i(TAG, "Marked MISSED: ${med.name} at $slotTime on $date")
-
-        if (!med.caretakerPhone.isNullOrBlank() && med.callReminderStatus == "scheduled") {
             reminderManager?.triggerCaretakerCallEscalation(
-                medicationId = med.id,
-                medicineName = med.name,
-                caretakerPhone = med.caretakerPhone,
-                dose = med.dose
+                medicationId = medicationId,
+                medicineName = medicineName ?: "Medication",
+                caretakerPhone = "+65 9123 4567",
+                dose = dose ?: "1 tablet"
             )
         }
+
+        reminderManager?.cancelReminder(medicationId, slotTime, date)
+        Log.i(TAG, "Marked MISSED: $medicationId at $slotTime on $date")
     }
 
     /**

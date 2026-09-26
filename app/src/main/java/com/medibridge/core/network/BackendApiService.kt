@@ -129,7 +129,7 @@ interface BackendApiService {
 
 object BackendClient {
 
-    private var currentBaseUrl: String = BuildConfig.BACKEND_BASE_URL
+    private var currentBaseUrl: String = AppNetworkConfig.effectiveBaseUrl
 
     private fun getOkHttpClient(): OkHttpClient {
         val logging = HttpLoggingInterceptor().apply {
@@ -167,15 +167,22 @@ object BackendClient {
     private const val KEY_BASE_URL = "backend_base_url"
 
     fun init(context: android.content.Context) {
+        if (AppNetworkConfig.MANUAL_LAPTOP_IP.isNotBlank()) {
+            currentBaseUrl = AppNetworkConfig.effectiveBaseUrl
+            cachedService = null
+            return
+        }
         try {
             val prefs = context.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
             val saved = prefs.getString(KEY_BASE_URL, null)
             if (!saved.isNullOrBlank()) {
                 currentBaseUrl = saved
                 cachedService = null
+            } else {
+                currentBaseUrl = AppNetworkConfig.effectiveBaseUrl
             }
         } catch (e: Exception) {
-            // Ignore pref read failure
+            currentBaseUrl = AppNetworkConfig.effectiveBaseUrl
         }
     }
 

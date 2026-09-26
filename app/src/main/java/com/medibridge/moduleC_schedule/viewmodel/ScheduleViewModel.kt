@@ -70,19 +70,46 @@ class ScheduleViewModel(
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
+    init {
+        viewModelScope.launch {
+            try {
+                val db = AppDatabase.getInstance(getApplication())
+                val existing = db.medicationDao().getAllMedicationsDirect()
+                if (existing.isEmpty()) {
+                    com.medibridge.core.demo.DemoDataSeeder.seedPatientMrTanAhKow(db)
+                }
+            } catch (e: Exception) {
+                // Ignore initialization error
+            }
+        }
+    }
+
+    /**
+     * Re-seeds or loads the primary clinical schedule for Mr Tan Ah Kow into Room DB.
+     */
+    fun seedDemoSchedule() {
+        viewModelScope.launch {
+            try {
+                val db = AppDatabase.getInstance(getApplication())
+                com.medibridge.core.demo.DemoDataSeeder.seedPatientMrTanAhKow(db)
+            } catch (e: Exception) {
+                // Ignore seeding error
+            }
+        }
+    }
+
     /**
      * Marks a reminder item as taken by its occurrence ID.
      * ID format: "${medicationId}_${slotTime}_${date}"
+     * If medication does not exist in DB, creates a separate DB entry.
      */
-    fun markTaken(reminderId: String) {
+    fun markTaken(reminderId: String, medicineName: String? = null, dose: String? = null) {
         viewModelScope.launch {
             val parts = reminderId.split("_")
-            if (parts.size >= 3) {
-                val medicationId = parts[0]
-                val slotTime = parts[1]
-                val date = parts.subList(2, parts.size).joinToString("_")
-                repository.markTaken(medicationId, slotTime, date)
-            }
+            val medicationId = parts[0]
+            val slotTime = if (parts.size >= 2) parts[1] else "08:00"
+            val date = if (parts.size >= 3) parts.subList(2, parts.size).joinToString("_") else ScheduleRepository.todayIso()
+            repository.markTaken(medicationId, slotTime, date, medicineName, dose)
         }
     }
 
@@ -108,16 +135,15 @@ class ScheduleViewModel(
 
     /**
      * Marks a reminder item as missed by its occurrence ID.
+     * If medication does not exist in DB, creates a separate DB entry and alerts caretaker.
      */
-    fun markMissed(reminderId: String) {
+    fun markMissed(reminderId: String, medicineName: String? = null, dose: String? = null) {
         viewModelScope.launch {
             val parts = reminderId.split("_")
-            if (parts.size >= 3) {
-                val medicationId = parts[0]
-                val slotTime = parts[1]
-                val date = parts.subList(2, parts.size).joinToString("_")
-                repository.markMissed(medicationId, slotTime, date)
-            }
+            val medicationId = parts[0]
+            val slotTime = if (parts.size >= 2) parts[1] else "08:00"
+            val date = if (parts.size >= 3) parts.subList(2, parts.size).joinToString("_") else ScheduleRepository.todayIso()
+            repository.markMissed(medicationId, slotTime, date, medicineName, dose)
         }
     }
 

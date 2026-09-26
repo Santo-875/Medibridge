@@ -29,8 +29,8 @@ class SettingsViewModel : ViewModel() {
     private val _ttsLanguage = MutableStateFlow(ReminderLanguage.ENGLISH)
     val ttsLanguage: StateFlow<ReminderLanguage> = _ttsLanguage.asStateFlow()
 
-    // Backend Base URL (defaults to BuildConfig.BACKEND_BASE_URL)
-    private val _backendBaseUrl = MutableStateFlow(BuildConfig.BACKEND_BASE_URL)
+    // Backend Base URL (defaults to BackendClient.getBaseUrl())
+    private val _backendBaseUrl = MutableStateFlow(com.medibridge.core.network.BackendClient.getBaseUrl())
     val backendBaseUrl: StateFlow<String> = _backendBaseUrl.asStateFlow()
 
     // Caretaker emergency escalation phone number
