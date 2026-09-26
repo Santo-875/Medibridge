@@ -5,11 +5,16 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
+import com.medibridge.moduleB_safety.data.SafetyCheckDao
+import com.medibridge.moduleB_safety.data.SafetyCheckEntity
+
 /**
  * MediBridge Room Database — single source of truth for local persistence.
  *
  * DB VERSION HISTORY:
  *   v1 — Initial schema: medications table (hackathon shell)
+ *   v3 — PatientSummaryEntity added (Module C)
+ *   v4 — SafetyCheckEntity added (Module B migration)
  *
  * HOW TO MIGRATE:
  *   1. Bump [version] below.
@@ -20,14 +25,15 @@ import androidx.room.RoomDatabase
  *   Add new @Entity classes to the [entities] array and bump the version.
  */
 @Database(
-    entities = [MedicationEntity::class, PatientSummaryEntity::class],
-    version = 3,
+    entities = [MedicationEntity::class, PatientSummaryEntity::class, SafetyCheckEntity::class],
+    version = 4,
     exportSchema = false  // Set to true + provide schemaDirectory for production
 )
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun medicationDao(): MedicationDao
     abstract fun patientSummaryDao(): PatientSummaryDao
+    abstract fun safetyCheckDao(): SafetyCheckDao
 
     companion object {
         @Volatile

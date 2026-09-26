@@ -1,6 +1,7 @@
 package com.medibridge.moduleB_safety.data
 
 import android.content.Context
+import com.medibridge.core.db.AppDatabase
 import com.medibridge.core.model.MedicationObject
 import com.medibridge.moduleB_safety.logic.AiSafetyResponse
 import com.medibridge.moduleB_safety.logic.SafetyEvaluationResult
@@ -85,7 +86,7 @@ class SafetyRepository(
 
         fun getInstance(context: Context): SafetyRepository {
             return INSTANCE ?: synchronized(this) {
-                val db = SafetyDatabase.getInstance(context)
+                val db = AppDatabase.getInstance(context)
                 val repo = SafetyRepository(db.safetyCheckDao())
                 INSTANCE = repo
                 repo
