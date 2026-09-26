@@ -37,3 +37,5 @@ __pycache__/
 image_uploads/
 audio_uploads/
 backend/.venv/
+final_integration/
+mod_integration/
