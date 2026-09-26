@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+python-multipart
+pillow
+opencv-python
+pydantic
+pytest
+httpx
+groq
+python-dotenv
+sarvamai
+requests
+google-genai
