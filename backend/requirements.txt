@@ -11,3 +11,5 @@ python-dotenv
 sarvamai
 requests
 google-genai
+paddleocr
+pypdf

@@ -28,3 +28,12 @@ secrets.properties
 
 # Test results
 /test-results
+
+# Backend & Python
+.venv/
+__pycache__/
+*.pyc
+*.db
+image_uploads/
+audio_uploads/
+backend/.venv/
