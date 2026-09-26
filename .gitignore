@@ -1,0 +1,42 @@
+# Python virtual environment
+.venv/
+venv/
+ENV/
+env/
+
+# Python cache & bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+.pytest_cache/
+
+# Environment variables & secrets (CRITICAL)
+.env
+.env.*
+!.env.example
+*.env
+
+# Uploaded media & processing artifacts
+prescription_scanning/image_uploads/
+speech_to_text/audio_uploads/
+speech_to_text/queue/
+uploads/
+*.jpg
+*.jpeg
+*.png
+*.m4a
+*.wav
+*.mp3
+
+# PaddleOCR cached models & temp files
+.paddleocr/
+.paddlex/
+
+# IDE & OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
