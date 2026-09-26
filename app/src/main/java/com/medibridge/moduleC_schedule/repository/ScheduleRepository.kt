@@ -151,6 +151,36 @@ class ScheduleRepository(
     }
 
     /**
+     * Marks a medication occurrence as "MISSED" and triggers caretaker call escalation if scheduled.
+     */
+    suspend fun markMissed(medicationId: String, slotTime: String, date: String = todayIso()) = withContext(Dispatchers.IO) {
+        val entity = medicationDao.getMedicationById(medicationId) ?: return@withContext
+        val med = entity.fromEntity()
+
+        val updatedAdherence = updateAdherenceList(
+            currentList = med.adherence,
+            date = date,
+            slotTime = slotTime,
+            newStatus = "missed"
+        )
+
+        val updatedMed = med.copy(adherence = updatedAdherence)
+        medicationDao.upsertMedication(updatedMed.toEntity())
+
+        reminderManager?.cancelReminder(medicationId, slotTime, date)
+        Log.i(TAG, "Marked MISSED: ${med.name} at $slotTime on $date")
+
+        if (!med.caretakerPhone.isNullOrBlank() && med.callReminderStatus == "scheduled") {
+            reminderManager?.triggerCaretakerCallEscalation(
+                medicationId = med.id,
+                medicineName = med.name,
+                caretakerPhone = med.caretakerPhone,
+                dose = med.dose
+            )
+        }
+    }
+
+    /**
      * Snoozes a medication occurrence by [delayMinutes] (default 15).
      *
      * 1. Records snooze state.

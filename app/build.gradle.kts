@@ -17,6 +17,7 @@ android {
         versionName = "1.0.0-hackathon-shell"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("String", "BACKEND_BASE_URL", "\"http://10.0.2.2:8000/\"")
     }
 
     buildTypes {
@@ -40,6 +41,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -80,6 +82,13 @@ dependencies {
 
     // ViewModel + StateFlow
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+
+    // CameraX for Module A OCR/Bill Scanner
+    implementation("androidx.camera:camera-core:1.3.4")
+    implementation("androidx.camera:camera-camera2:1.3.4")
+    implementation("androidx.camera:camera-lifecycle:1.3.4")
+    implementation("androidx.camera:camera-view:1.3.4")
+    implementation("androidx.concurrent:concurrent-futures-ktx:1.2.0")
 
     // Testing
     testImplementation(libs.junit)

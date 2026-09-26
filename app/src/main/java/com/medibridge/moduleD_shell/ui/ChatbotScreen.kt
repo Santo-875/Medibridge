@@ -14,8 +14,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.medibridge.core.chat.ChatRepository
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -38,6 +40,8 @@ import java.util.UUID
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatbotScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    val chatRepository = remember { ChatRepository(context) }
     var messageText by remember { mutableStateOf("") }
     val messages    = remember { mutableStateListOf(
         ChatMessage(id = "init", text = "Hi! I'm Medi 👋 — your personal medication assistant.\n\nAsk me about your medicines, side effects, schedule, or drug interactions.", isBot = true)
@@ -156,17 +160,12 @@ fun ChatbotScreen(onBack: () -> Unit) {
                             messages.add(ChatMessage(id = UUID.randomUUID().toString(), text = trimmed, isBot = false))
                             messageText = ""
 
-                            // TODO: Module D — replace with Retrofit AI API call
-                            //   scope.launch {
-                            //     val reply = chatRepository.sendMessage(trimmed)
-                            //     messages.add(ChatMessage(id = UUID.randomUUID().toString(), text = reply, isBot = true))
-                            //   }
                             scope.launch {
-                                kotlinx.coroutines.delay(600)
+                                val reply = chatRepository.sendMessage(trimmed)
                                 messages.add(
                                     ChatMessage(
-                                        id   = UUID.randomUUID().toString(),
-                                        text = dummyBotReply(trimmed),
+                                        id = UUID.randomUUID().toString(),
+                                        text = reply,
                                         isBot = true
                                     )
                                 )

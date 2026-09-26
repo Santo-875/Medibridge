@@ -103,6 +103,100 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
 
             HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
 
+            // ── Backend Connection section ────────────────────────────────────
+            SettingsSectionHeader(title = "Backend Connection")
+
+            val currentUrl by viewModel.backendBaseUrl.collectAsState()
+            var urlInput by remember(currentUrl) { mutableStateOf(currentUrl) }
+
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                OutlinedTextField(
+                    value = urlInput,
+                    onValueChange = { urlInput = it },
+                    label = { Text("FastAPI Backend Base URL") },
+                    placeholder = { Text("http://10.0.2.2:8000/") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = { viewModel.updateBackendBaseUrl(urlInput) },
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Icon(Icons.Filled.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Save URL")
+                }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+
+            // ── Pitch Demo Scenarios section (Step 6) ──────────────────────────
+            SettingsSectionHeader(title = "Pitch Demo Scenarios")
+
+            val context = androidx.compose.ui.platform.LocalContext.current
+            val demoStatus by viewModel.demoStatus.collectAsState()
+
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Text(
+                    text = "Load pre-configured clinical scenarios for hackathon pitch demonstration:",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(10.dp))
+
+                Button(
+                    onClick = { viewModel.loadAllDemoScenarios(context) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Icon(Icons.Filled.PlayArrow, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Load All 3 Pitch Scenarios", fontWeight = FontWeight.Bold)
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = { viewModel.loadScenario1(context) },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("1: Diabetes", style = MaterialTheme.typography.labelSmall)
+                    }
+                    OutlinedButton(
+                        onClick = { viewModel.loadScenario2(context) },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("2: Hypertn", style = MaterialTheme.typography.labelSmall)
+                    }
+                    OutlinedButton(
+                        onClick = { viewModel.loadScenario3(context) },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("3: Caretaker", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+
+                if (!demoStatus.isNullOrBlank()) {
+                    Spacer(Modifier.height(8.dp))
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = demoStatus ?: "",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.padding(8.dp)
+                        )
+                    }
+                }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+
             // ── About section ─────────────────────────────────────────────────
             SettingsSectionHeader(title = "About")
 

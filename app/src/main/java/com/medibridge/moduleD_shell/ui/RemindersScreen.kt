@@ -10,12 +10,15 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.medibridge.core.theme.*
+import com.medibridge.moduleC_schedule.viewmodel.ScheduleViewModel
 
 /**
  * RemindersScreen — shows the list of upcoming and past medication reminders.
@@ -29,7 +32,13 @@ import com.medibridge.core.theme.*
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RemindersScreen(onBack: () -> Unit) {
+fun RemindersScreen(
+    onBack: () -> Unit,
+    viewModel: ScheduleViewModel = viewModel()
+) {
+    val liveReminders by viewModel.reminders.collectAsState()
+    val displayReminders = if (liveReminders.isNotEmpty()) liveReminders else dummyReminders
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -73,8 +82,13 @@ fun RemindersScreen(onBack: () -> Unit) {
                 )
             }
 
-            items(dummyReminders) { reminder ->
-                ReminderCard(reminder = reminder)
+            items(displayReminders, key = { it.id }) { reminder ->
+                ReminderCard(
+                    reminder = reminder,
+                    onTaken = { viewModel.markTaken(reminder.id) },
+                    onSnooze = { viewModel.snooze(reminder.id, 15) },
+                    onMissed = { viewModel.markMissed(reminder.id) }
+                )
             }
         }
     }
@@ -107,7 +121,12 @@ private val dummyReminders = listOf(
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun ReminderCard(reminder: ReminderItem) {
+private fun ReminderCard(
+    reminder: ReminderItem,
+    onTaken: () -> Unit = {},
+    onSnooze: () -> Unit = {},
+    onMissed: () -> Unit = {}
+) {
     val accentColor = when (reminder.status) {
         ReminderStatus.TAKEN   -> StatusVerified
         ReminderStatus.MISSED  -> StatusConflict
@@ -169,16 +188,11 @@ private fun ReminderCard(reminder: ReminderItem) {
 
                 Spacer(Modifier.height(10.dp))
 
-                // Action buttons (UI only — wire to AlarmManager/WorkManager in Module C/D)
-                // TODO: Module C - missed state should be inferred automatically if time passes with no action
                 if (reminder.status == ReminderStatus.PENDING) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         // Taken button
                         FilledTonalButton(
-                            onClick = {
-                                // TODO: Module C/D — mark dose as taken in DB (adherence log)
-                                // dao.markAdherence(reminder.id, date = today(), status = "taken")
-                            },
+                            onClick = onTaken,
                             colors = ButtonDefaults.filledTonalButtonColors(
                                 containerColor = StatusVerifiedBg,
                                 contentColor   = StatusVerified
@@ -192,15 +206,25 @@ private fun ReminderCard(reminder: ReminderItem) {
 
                         // Snooze button
                         OutlinedButton(
-                            onClick = {
-                                // TODO: Module D — reschedule notification by 15/30 min
-                                // notificationManager.snooze(reminder.id, delayMinutes = 15)
-                            },
+                            onClick = onSnooze,
                             modifier = Modifier.weight(1f)
                         ) {
                             Icon(Icons.Filled.Snooze, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
                             Text("Snooze", style = MaterialTheme.typography.labelMedium)
+                        }
+
+                        // Missed / Escalate button (allows testing caretaker call)
+                        OutlinedButton(
+                            onClick = onMissed,
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = StatusConflict
+                            ),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Missed", style = MaterialTheme.typography.labelMedium)
                         }
                     }
                 } else {
@@ -210,7 +234,7 @@ private fun ReminderCard(reminder: ReminderItem) {
                         color = if (reminder.status == ReminderStatus.TAKEN) StatusVerifiedBg else StatusConflictBg
                     ) {
                         Text(
-                            text     = if (reminder.status == ReminderStatus.TAKEN) "✓ Taken" else "✕ Missed",
+                            text     = if (reminder.status == ReminderStatus.TAKEN) "✓ Taken" else "✕ Missed (Caretaker Alerted)",
                             style    = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold,
                             color    = if (reminder.status == ReminderStatus.TAKEN) StatusVerified else StatusConflict,

@@ -38,6 +38,26 @@ class MedicationReminderReceiver : BroadcastReceiver() {
             slotTime = slotTime,
             date = date
         )
+
+        val pendingResult = goAsync()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val db = AppDatabase.getInstance(context)
+                val med = db.medicationDao().getMedicationById(medicationId)
+                if (med != null && !med.caretakerPhone.isNullOrBlank() && med.callReminderStatus == "scheduled") {
+                    reminderManager.triggerCaretakerCallEscalation(
+                        medicationId = medicationId,
+                        medicineName = medicineName,
+                        caretakerPhone = med.caretakerPhone,
+                        dose = dose
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error checking caretaker call status", e)
+            } finally {
+                pendingResult.finish()
+            }
+        }
     }
 }
 

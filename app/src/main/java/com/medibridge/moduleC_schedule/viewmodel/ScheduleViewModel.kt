@@ -107,6 +107,21 @@ class ScheduleViewModel(
     }
 
     /**
+     * Marks a reminder item as missed by its occurrence ID.
+     */
+    fun markMissed(reminderId: String) {
+        viewModelScope.launch {
+            val parts = reminderId.split("_")
+            if (parts.size >= 3) {
+                val medicationId = parts[0]
+                val slotTime = parts[1]
+                val date = parts.subList(2, parts.size).joinToString("_")
+                repository.markMissed(medicationId, slotTime, date)
+            }
+        }
+    }
+
+    /**
      * Generates and stores a patient summary + side effects using Gemini AI.
      */
     fun generatePatientSummary(medication: MedicationObject) {

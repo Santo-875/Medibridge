@@ -220,6 +220,8 @@ class ReminderManager(private val context: Context) {
     ) {
         val tapIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(EXTRA_MEDICATION_ID, medicationId)
+            putExtra("EXTRA_NAV_ROUTE", "reminders")
         }
         val tapPendingIntent = PendingIntent.getActivity(
             context,
@@ -280,6 +282,47 @@ class ReminderManager(private val context: Context) {
      */
     fun cancelNotification(occurrenceId: String) {
         notificationManager?.cancel(buildRequestCode(occurrenceId))
+    }
+
+    /**
+     * Call reminder escalation: triggers Intent(ACTION_CALL) to caretakerPhone
+     * and speaks the reminder text on-device via ReminderTtsHelper.
+     * Note: In-call audio injection requires carrier/VoIP infrastructure; this prototype
+     * initiates the call and plays the local TTS announcement on the initiating device.
+     */
+    fun triggerCaretakerCallEscalation(
+        medicationId: String,
+        medicineName: String,
+        caretakerPhone: String,
+        dose: String
+    ) {
+        try {
+            val ttsHelper = com.medibridge.moduleC_schedule.tts.ReminderTtsHelper(context)
+            val callIntent = Intent(Intent.ACTION_CALL).apply {
+                data = android.net.Uri.parse("tel:$caretakerPhone")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(callIntent)
+
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                ttsHelper.speakReminder(
+                    medicineName = "MediBridge Caretaker Escalation. Patient missed dose for $medicineName",
+                    dose = dose
+                )
+            }, 1000)
+            Log.i(TAG, "Triggered caretaker call escalation to $caretakerPhone for $medicineName")
+        } catch (e: Exception) {
+            Log.w(TAG, "ACTION_CALL failed (permission may not be granted): ${e.message}, falling back to dialer")
+            try {
+                val dialIntent = Intent(Intent.ACTION_DIAL).apply {
+                    data = android.net.Uri.parse("tel:$caretakerPhone")
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(dialIntent)
+            } catch (e2: Exception) {
+                Log.e(TAG, "Dialer fallback failed: ${e2.message}")
+            }
+        }
     }
 
     private fun calculateTriggerTimeMs(dateStr: String, timeStr: String): Long {

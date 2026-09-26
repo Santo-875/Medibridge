@@ -24,6 +24,9 @@ interface PatientSummaryDao {
     @Query("SELECT * FROM patient_summaries ORDER BY generatedAt DESC")
     fun getAllSummaries(): Flow<List<PatientSummaryEntity>>
 
+    @Query("SELECT * FROM patient_summaries ORDER BY generatedAt DESC")
+    suspend fun getAllSummariesDirect(): List<PatientSummaryEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertSummary(summary: PatientSummaryEntity)
 
