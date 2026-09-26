@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- MediBridge App Icon — Medical cross / pill design -->
+    <!-- White pill capsule background -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,28 C40.7,28 30,38.7 30,52 L30,56 C30,69.3 40.7,80 54,80 C67.3,80 78,69.3 78,56 L78,52 C78,38.7 67.3,28 54,28Z"/>
+    <!-- Teal medical cross -->
+    <path
+        android:fillColor="#0D9488"
+        android:pathData="M60,38 L48,38 L48,48 L38,48 L38,60 L48,60 L48,70 L60,70 L60,60 L70,60 L70,48 L60,48Z"/>
+</vector>
