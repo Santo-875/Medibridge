@@ -14,6 +14,7 @@ sealed class Screen(val route: String) {
 
     // ── Module D: Shell (always present) ─────────────────────────────────────
     object Home        : Screen("home")
+    object Recording   : Screen("recording")
     object Reminders   : Screen("reminders")
     object Settings    : Screen("settings")
     object Chatbot     : Screen("chatbot")       // Opens from Home FAB
@@ -39,10 +40,11 @@ sealed class BottomNavItem(
     val iconName: String
 ) {
     object Home      : BottomNavItem(Screen.Home,      "Home",      "Home")
+    object Recording : BottomNavItem(Screen.Recording, "Record",    "Mic")
     object Reminders : BottomNavItem(Screen.Reminders, "Reminders", "Notifications")
     object Settings  : BottomNavItem(Screen.Settings,  "Settings",  "Settings")
 
     companion object {
-        val all = listOf(Home, Reminders, Settings)
+        val all = listOf(Home, Recording, Reminders, Settings)
     }
 }

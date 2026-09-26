@@ -42,7 +42,22 @@ fun MediBridgeNavGraph(
                 onScannerClick = { navController.navigate(Screen.Scanner.route) },
                 onChatbotClick = { navController.navigate(Screen.Chatbot.route) },
                 onReminderClick = { navController.navigate(Screen.Reminders.route) },
-                onSafetyClick = { navController.navigate(Screen.SafetyDashboard.route) }
+                onSafetyClick = { navController.navigate(Screen.SafetyDashboard.route) },
+                onRecordClick = { navController.navigate(Screen.Recording.route) }
+            )
+        }
+
+        // ── Module D: Recording Tab & Screen ──────────────────────────────────
+        composable(Screen.Recording.route) {
+            com.medibridge.moduleD_shell.ui.RecordingScreen(
+                onBack = { navController.popBackStack() },
+                onNavigateToReminders = {
+                    navController.navigate(Screen.Reminders.route) {
+                        popUpTo(navController.graph.startDestinationId) { saveState = true }
+                        launchSingleTop = true
+                        restoreState = true
+                    }
+                }
             )
         }
 

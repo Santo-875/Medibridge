@@ -79,6 +79,8 @@ data class SpeechUploadResponse(
     val filename: String? = null,
     val status: String? = null,
     val transcript: String? = null,
+    @SerializedName("transcript_tamil") val transcriptTamil: String? = null,
+    @SerializedName("transcript_english") val transcriptEnglish: String? = null,
     val summary: ApiSpeechSummary? = null
 )
 
@@ -161,9 +163,38 @@ object BackendClient {
         return service
     }
 
-    fun updateBaseUrl(newUrl: String) {
-        currentBaseUrl = newUrl
-        cachedService = null
+    private const val PREFS_NAME = "medibridge_config"
+    private const val KEY_BASE_URL = "backend_base_url"
+
+    fun init(context: android.content.Context) {
+        try {
+            val prefs = context.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
+            val saved = prefs.getString(KEY_BASE_URL, null)
+            if (!saved.isNullOrBlank()) {
+                currentBaseUrl = saved
+                cachedService = null
+            }
+        } catch (e: Exception) {
+            // Ignore pref read failure
+        }
+    }
+
+    fun updateBaseUrl(newUrl: String, context: android.content.Context? = null) {
+        val trimmed = newUrl.trim()
+        if (trimmed.isNotBlank()) {
+            currentBaseUrl = trimmed
+            cachedService = null
+            context?.let {
+                try {
+                    it.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
+                        .edit()
+                        .putString(KEY_BASE_URL, trimmed)
+                        .apply()
+                } catch (e: Exception) {
+                    // Ignore pref write failure
+                }
+            }
+        }
     }
 
     fun getBaseUrl(): String = currentBaseUrl

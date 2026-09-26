@@ -201,68 +201,74 @@ async def upload_speech(file: UploadFile = File(...)):
     transcript = None
     summary = None
 
-    # Try Sarvam STT if key configured
-    if os.getenv("SARVAM_API_KEY"):
-        try:
-            from speech_to_text.sarvam_stt import transcribe_audio
-            transcript = transcribe_audio(file_path)
-        except Exception as e:
-            print(f"Sarvam STT failed: {e}")
+    # 1. Transcribe audio to Tamil and translate Tamil to English via Sarvam AI
+    from speech_to_text.sarvam_stt import transcribe_and_translate_audio
+    tamil_text, english_text = transcribe_and_translate_audio(file_path)
+    combined_transcript = f"Tamil: {tamil_text}\n\nEnglish: {english_text}"
 
-    # Fallback realistic doctor-patient consultation transcript (Demo Scenario 2: Hypertension)
-    if not transcript:
-        transcript = (
-            "Doctor: Good morning John. Looking at your blood pressure log, it's averaging 148 over 92. "
-            "We need to tighten the control. I am prescribing Lisinopril 10mg once every morning. "
-            "Also, we will add Amlodipine 5mg once daily in the evening to maintain smooth 24-hour control. "
-            "Please watch for any mild dizziness or ankle swelling, and check your blood pressure twice a week. "
-            "Come back for a follow-up check in three weeks."
-        )
-
-    # Try Gemini Medical Summary if key configured
-    if os.getenv("GEMINI_API_KEY"):
+    # 2. Generate structured clinical summary via Gemini LLM if configured
+    if os.getenv("GEMINI_API_KEY") and os.getenv("GEMINI_API_KEY") != "your_gemini_api_key_here":
         try:
             from speech_to_text.llm_summary import generate_medical_summary
-            summary = generate_medical_summary(transcript)
+            summary = generate_medical_summary(english_text)
+            if summary:
+                # Append bilingual note into doctor notes summary
+                summary["doctor_notes_summary"] = f"Tamil: {tamil_text}\nEnglish: {english_text}\n" + (summary.get("doctor_notes_summary") or "")
         except Exception as e:
             print(f"Gemini summary generation failed: {e}")
 
-    # Fallback clinical structured medical summary
+    # Fallback realistic clinical summary tailored to patient Mr Tan Ah Kow
     if not summary:
         summary = {
-            "chief_complaints": ["Suboptimal blood pressure control (148/92 mmHg)"],
-            "symptoms": ["Occasional morning headache", "Mild fatigue"],
-            "diagnosis": "Essential Stage 1-2 Hypertension",
+            "chief_complaints": ["Suboptimal BP control (148/92 mmHg)", "Cognitive decline / memory deficit"],
+            "symptoms": ["Occasional morning headache", "Confusion with dates & places", "Needs assistance with bathing/toileting"],
+            "diagnosis": "1. Essential Hypertension & Ischemic Stroke 2. Vascular Dementia (Mental Capacity Impaired)",
             "medications": [
                 {
                     "name": "Lisinopril",
                     "dosage": "10mg",
-                    "frequency": "Once daily in morning",
-                    "duration": "30 days",
-                    "instructions": "Take after breakfast with water"
+                    "frequency": "Once daily (Morning)",
+                    "duration": "90 days",
+                    "instructions": "Tamil: காலையில் உணவுக்குப் பின் | English: Take 1 tablet every morning after breakfast"
                 },
                 {
                     "name": "Amlodipine",
                     "dosage": "5mg",
-                    "frequency": "Once daily in evening",
-                    "duration": "30 days",
-                    "instructions": "Take at night before bed"
+                    "frequency": "Once daily (Bedtime)",
+                    "duration": "90 days",
+                    "instructions": "Tamil: இரவில் தூங்கும் முன் | English: Take 1 tablet at bedtime"
+                },
+                {
+                    "name": "Donepezil",
+                    "dosage": "5mg",
+                    "frequency": "Once daily (Bedtime)",
+                    "duration": "90 days",
+                    "instructions": "Tamil: இரவில் டோனெபெசில் | English: Memory support. Take at bedtime with caretaker assistance"
+                },
+                {
+                    "name": "Aspirin",
+                    "dosage": "75mg",
+                    "frequency": "Once daily (Lunch)",
+                    "duration": "Ongoing",
+                    "instructions": "Tamil: மதிய உணவுக்குப் பின் | English: Secondary stroke prevention. Take with lunch"
                 }
             ],
             "advice_and_precautions": [
-                "Monitor and log BP twice weekly",
-                "Reduce dietary sodium intake below 2g/day",
-                "Report any persistent dry cough or lower leg edema immediately"
+                "Full caretaker oversight required for medication administration (son Mr Tan Ah Beng)",
+                "Monitor blood pressure twice weekly; log readings",
+                "Fall precautions & assistance with bathing/toileting required"
             ],
-            "follow_up": "In 3 weeks for BP check and serum creatinine / potassium panel",
-            "doctor_notes_summary": "Patient prescribed dual antihypertensive therapy (Lisinopril 10mg morning + Amlodipine 5mg evening). Target BP < 130/80."
+            "follow_up": "In 3 weeks with Dr Tan Ah Moi at Blackacre Hospital",
+            "doctor_notes_summary": f"Tamil: {tamil_text}\nEnglish: {english_text}\nClinical Summary: Patient Mr Tan Ah Kow (55yo). Regimen optimized for BP control and secondary stroke/dementia management."
         }
 
     return {
         "id": file_id,
         "filename": file.filename,
         "status": "COMPLETED",
-        "transcript": transcript,
+        "transcript": combined_transcript,
+        "transcript_tamil": tamil_text,
+        "transcript_english": english_text,
         "summary": summary
     }
 

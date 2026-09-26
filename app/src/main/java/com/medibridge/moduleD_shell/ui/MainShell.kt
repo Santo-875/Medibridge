@@ -70,6 +70,7 @@ fun MainShell(
                             icon = {
                                 val icon: ImageVector = when (item) {
                                     BottomNavItem.Home      -> Icons.Filled.Home
+                                    BottomNavItem.Recording -> Icons.Filled.Mic
                                     BottomNavItem.Reminders -> Icons.Filled.Notifications
                                     BottomNavItem.Settings  -> Icons.Filled.Settings
                                 }

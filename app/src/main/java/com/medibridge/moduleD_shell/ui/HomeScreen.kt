@@ -61,20 +61,15 @@ fun HomeScreen(
     onScannerClick: () -> Unit,
     onChatbotClick: () -> Unit,
     onReminderClick: () -> Unit,
-    onSafetyClick: () -> Unit = {}
+    onSafetyClick: () -> Unit = {},
+    onRecordClick: () -> Unit = {}
 ) {
     var showNotificationPanel by remember { mutableStateOf(false) }
     var showPrivacySheet by remember { mutableStateOf(false) }
     var isCaretakerMode by remember { mutableStateOf(false) }
-    var patientName by remember { mutableStateOf("John Doe") }
-    var caretakerPhone by remember { mutableStateOf("+1 555-0199") }
-    var callStatus by remember { mutableStateOf("Not Verified") } // "Not Verified", "Verified", "Call Scheduled"
-
-    // Recording State Machine (Module A speech recognizer stub)
-    var isRecording by remember { mutableStateOf(false) }
-    var isProcessingRecording by remember { mutableStateOf(false) }
-    var recordingConfirmationMessage by remember { mutableStateOf<String?>(null) }
-    val scope = rememberCoroutineScope()
+    var patientName by remember { mutableStateOf("Mr Tan Ah Kow") }
+    var caretakerPhone by remember { mutableStateOf("+65 9123 4567") }
+    var callStatus by remember { mutableStateOf("Verified") } // "Not Verified", "Verified", "Call Scheduled"
 
     val context = LocalContext.current
     val db = remember { AppDatabase.getInstance(context) }
@@ -83,140 +78,15 @@ fun HomeScreen(
         roomMedEntities.map { it.fromEntity() }
     }
 
-    var mediaRecorder: MediaRecorder? by remember { mutableStateOf(null) }
-    var audioFile: File? by remember { mutableStateOf(null) }
-
-    val recordAudioPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) {
-            Toast.makeText(context, "Microphone enabled! Tap mic again to record.", Toast.LENGTH_SHORT).show()
-        } else {
-            Toast.makeText(context, "Microphone permission is required for voice notes", Toast.LENGTH_SHORT).show()
-        }
-    }
-
     Scaffold(
         topBar = {
             HomeTopBar(
                 isCaretakerMode = isCaretakerMode,
                 onModeToggle = { isCaretakerMode = it },
                 patientName = patientName,
-                isRecording = isRecording,
-                isProcessing = isProcessingRecording,
-                onRecordingToggle = {
-                    if (isRecording) {
-                        // Stop recording and process
-                        try {
-                            mediaRecorder?.stop()
-                            mediaRecorder?.release()
-                        } catch (e: Exception) {
-                            Log.e("HomeScreen", "Error stopping recorder", e)
-                        }
-                        mediaRecorder = null
-                        isRecording = false
-                        isProcessingRecording = true
-
-                        scope.launch {
-                            try {
-                                val file = audioFile
-                                var transcriptText = "Doctor consultation voice order"
-                                var summaryText = "Clinical consultation recorded."
-                                val candidateMeds = mutableListOf<MedicationObject>()
-
-                                if (file != null && file.exists()) {
-                                    try {
-                                        val reqBody = file.asRequestBody("audio/m4a".toMediaTypeOrNull())
-                                        val part = MultipartBody.Part.createFormData("file", file.name, reqBody)
-                                        val resp = BackendClient.getService().uploadSpeech(part)
-                                        resp.transcript?.let { transcriptText = it }
-                                        val summary = resp.summary
-                                        if (summary != null) {
-                                            summaryText = summary.doctorNotesSummary ?: summary.diagnosis ?: summaryText
-                                            if (summary.medications.isNotEmpty()) {
-                                                val mappedMeds = summary.medications.map {
-                                                    BackendClient.mapSpeechMedicationToObject(it, summary)
-                                                }
-                                                candidateMeds.addAll(mappedMeds)
-                                            }
-                                        }
-                                    } catch (e: Exception) {
-                                        Log.w("HomeScreen", "Backend STT endpoint failed: ${e.message}, applying on-device fallback")
-                                        // Fallback: Hypertension dual therapy demo data
-                                        transcriptText = "Doctor consultation: Initiating Lisinopril 10mg morning and Amlodipine 5mg bedtime."
-                                        summaryText = "Hypertension dual therapy consultation order."
-                                        val dummySummary = com.medibridge.core.network.ApiSpeechSummary(
-                                            diagnosis = "Stage 1 Essential Hypertension",
-                                            doctorNotesSummary = "Doctor consultation: Dual antihypertensive therapy initiated.",
-                                            medications = listOf(
-                                                com.medibridge.core.network.ApiSpeechMedication("Lisinopril", "10mg", "Once daily (Morning)", "30 days", "Take after breakfast"),
-                                                com.medibridge.core.network.ApiSpeechMedication("Amlodipine Besylate", "5mg", "Once daily (Night)", "30 days", "Take at bedtime")
-                                            )
-                                        )
-                                        candidateMeds.addAll(dummySummary.medications.map { BackendClient.mapSpeechMedicationToObject(it, dummySummary) })
-                                    }
-                                } else {
-                                    transcriptText = "Voice consultation audio note"
-                                    summaryText = "Consultation recorded and saved."
-                                }
-
-                                // 1. INSERT row into new RecordingEntity in shared AppDatabase
-                                val recording = com.medibridge.core.db.RecordingEntity(
-                                    timestamp = System.currentTimeMillis(),
-                                    filePath = file?.absolutePath ?: "",
-                                    transcript = transcriptText,
-                                    summary = summaryText
-                                )
-                                db.recordingDao().insertRecording(recording)
-
-                                // 2. Run MedicationIngestionPipeline if any medications extracted
-                                if (candidateMeds.isNotEmpty()) {
-                                    val evaluated = com.medibridge.core.pipeline.MedicationIngestionPipeline.evaluatePipeline(context, candidateMeds)
-                                    com.medibridge.core.pipeline.MedicationIngestionPipeline.commitPipeline(context, evaluated)
-                                    recordingConfirmationMessage = "Added ${candidateMeds.size} medication(s) from consultation!"
-                                } else {
-                                    recordingConfirmationMessage = "Consultation saved to Recordings!"
-                                }
-                            } catch (e: Exception) {
-                                Log.e("HomeScreen", "Voice consultation handling error", e)
-                                recordingConfirmationMessage = "Recording saved to history"
-                            } finally {
-                                isProcessingRecording = false
-                                delay(3500)
-                                recordingConfirmationMessage = null
-                            }
-                        }
-                    } else {
-                        // Start recording
-                        val hasPerm = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-                        if (!hasPerm) {
-                            recordAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                        } else {
-                            try {
-                                val file = File(context.cacheDir, "consultation_${System.currentTimeMillis()}.m4a")
-                                audioFile = file
-                                val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                                    MediaRecorder(context)
-                                } else {
-                                    @Suppress("DEPRECATION")
-                                    MediaRecorder()
-                                }
-                                recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
-                                recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                                recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                                recorder.setOutputFile(file.absolutePath)
-                                recorder.prepare()
-                                recorder.start()
-                                mediaRecorder = recorder
-                                isRecording = true
-                                recordingConfirmationMessage = null
-                            } catch (e: Exception) {
-                                Log.e("HomeScreen", "MediaRecorder initialization failed", e)
-                                isRecording = true // Keep UI state for testing
-                            }
-                        }
-                    }
-                },
+                isRecording = false,
+                isProcessing = false,
+                onRecordingToggle = onRecordClick,
                 onScannerClick = onScannerClick,
                 onNotificationClick = { showNotificationPanel = !showNotificationPanel },
                 onSafetyClick = onSafetyClick
@@ -253,60 +123,6 @@ fun HomeScreen(
                     .padding(paddingValues),
                 contentPadding = PaddingValues(bottom = 100.dp)
             ) {
-                // ── Processing / Confirmation Banner ─────────────────────────
-                if (isProcessingRecording) {
-                    item {
-                        Surface(
-                            color = MaterialTheme.colorScheme.tertiaryContainer,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(18.dp),
-                                    strokeWidth = 2.dp,
-                                    color = MaterialTheme.colorScheme.onTertiaryContainer
-                                )
-                                Spacer(Modifier.width(12.dp))
-                                Text(
-                                    text = "Processing...",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Medium,
-                                    color = MaterialTheme.colorScheme.onTertiaryContainer
-                                )
-                            }
-                        }
-                    }
-                } else if (recordingConfirmationMessage != null) {
-                    item {
-                        Surface(
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.CheckCircle,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(Modifier.width(10.dp))
-                                Text(
-                                    text = recordingConfirmationMessage!!,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                                )
-                            }
-                        }
-                    }
-                }
-
                 // ── Header banner ─────────────────────────────────────────────
                 item {
                     HomeHeaderBanner(

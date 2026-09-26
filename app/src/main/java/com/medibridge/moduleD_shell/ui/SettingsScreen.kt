@@ -299,14 +299,19 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                Spacer(Modifier.height(8.dp))
+                var isUrlSaved by remember { mutableStateOf(false) }
                 Button(
-                    onClick = { viewModel.updateBackendBaseUrl(urlInput) },
-                    modifier = Modifier.align(Alignment.End)
+                    onClick = {
+                        viewModel.updateBackendBaseUrl(urlInput, context)
+                        isUrlSaved = true
+                        android.widget.Toast.makeText(context, "Backend URL saved: ${urlInput.trim()}", android.widget.Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.align(Alignment.End),
+                    colors = if (isUrlSaved) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary) else ButtonDefaults.buttonColors()
                 ) {
-                    Icon(Icons.Filled.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Icon(if (isUrlSaved) Icons.Filled.Check else Icons.Filled.Save, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Save URL")
+                    Text(if (isUrlSaved) "Saved!" else "Save URL")
                 }
             }
 
@@ -330,7 +335,7 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                         modifier = Modifier.weight(1f),
                         colors = if (activeScenario == 1) ButtonDefaults.buttonColors() else ButtonDefaults.outlinedButtonColors()
                     ) {
-                        Text("1: Diabetes", style = MaterialTheme.typography.labelSmall)
+                        Text("1: Mr Tan Ah Kow", style = MaterialTheme.typography.labelSmall)
                     }
                     Button(
                         onClick = { viewModel.selectScenario(context, 2) },

@@ -68,11 +68,11 @@ class SettingsViewModel : ViewModel() {
         _snoozeIntervalMinutes.value = minutes
     }
 
-    fun updateBackendBaseUrl(newUrl: String) {
+    fun updateBackendBaseUrl(newUrl: String, context: Context? = null) {
         val trimmed = newUrl.trim()
         if (trimmed.isNotEmpty()) {
             _backendBaseUrl.value = trimmed
-            BackendClient.updateBaseUrl(trimmed)
+            BackendClient.updateBaseUrl(trimmed, context)
         }
     }
 
@@ -85,9 +85,9 @@ class SettingsViewModel : ViewModel() {
         viewModelScope.launch {
             when (index) {
                 1 -> {
-                    _demoStatus.value = "Loading Scenario 1: Diabetes (Metformin)..."
+                    _demoStatus.value = "Loading Scenario 1: Mr Tan Ah Kow (Clinical Dossier)..."
                     DemoDataSeeder.loadScenario(context, 1)
-                    _demoStatus.value = "Scenario 1: Diabetes loaded (Metformin 500mg)!"
+                    _demoStatus.value = "Scenario 1: Mr Tan Ah Kow loaded (Dementia & Stroke Regimen)!"
                 }
                 2 -> {
                     _demoStatus.value = "Loading Scenario 2: Hypertension (Dual Therapy Conflict)..."

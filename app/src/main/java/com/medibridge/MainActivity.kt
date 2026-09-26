@@ -30,6 +30,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        com.medibridge.core.network.BackendClient.init(this)
 
         val initialRoute = intent?.getStringExtra("EXTRA_NAV_ROUTE")
 
