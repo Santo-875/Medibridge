@@ -45,7 +45,8 @@ fun HomeScreen(
     onScannerClick: () -> Unit,
     onBillClick: () -> Unit,
     onChatbotClick: () -> Unit,
-    onReminderClick: () -> Unit
+    onReminderClick: () -> Unit,
+    onSafetyClick: () -> Unit = {}
 ) {
     var showNotificationPanel by remember { mutableStateOf(false) }
     var showPrivacySheet by remember { mutableStateOf(false) }
@@ -91,7 +92,8 @@ fun HomeScreen(
                 },
                 onBillClick = onBillClick,
                 onScannerClick = onScannerClick,
-                onNotificationClick = { showNotificationPanel = !showNotificationPanel }
+                onNotificationClick = { showNotificationPanel = !showNotificationPanel },
+                onSafetyClick = onSafetyClick
             )
         },
         floatingActionButton = {
@@ -267,7 +269,8 @@ private fun HomeTopBar(
     onRecordingToggle: () -> Unit,
     onBillClick: () -> Unit,
     onScannerClick: () -> Unit,
-    onNotificationClick: () -> Unit
+    onNotificationClick: () -> Unit,
+    onSafetyClick: () -> Unit
 ) {
     TopAppBar(
         title = {
@@ -346,6 +349,15 @@ private fun HomeTopBar(
                 Icon(
                     imageVector = Icons.Filled.DocumentScanner,
                     contentDescription = "Scan Prescription",
+                    tint = MaterialTheme.colorScheme.onPrimary
+                )
+            }
+
+            // Safety / Medication-verification button (Module B)
+            IconButton(onClick = onSafetyClick) {
+                Icon(
+                    imageVector = Icons.Filled.Shield,
+                    contentDescription = "Medication Safety",
                     tint = MaterialTheme.colorScheme.onPrimary
                 )
             }

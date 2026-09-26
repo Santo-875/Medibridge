@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import com.medibridge.moduleB_safety.ui.SafetyScreen
 import com.medibridge.moduleD_shell.ui.BillScreen
 import com.medibridge.moduleD_shell.ui.ChatbotScreen
 import com.medibridge.moduleD_shell.ui.HomeScreen
@@ -42,7 +43,8 @@ fun MediBridgeNavGraph(
                 onScannerClick = { navController.navigate(Screen.Scanner.route) },
                 onBillClick = { navController.navigate(Screen.Bill.route) },
                 onChatbotClick = { navController.navigate(Screen.Chatbot.route) },
-                onReminderClick = { navController.navigate(Screen.Reminders.route) }
+                onReminderClick = { navController.navigate(Screen.Reminders.route) },
+                onSafetyClick = { navController.navigate(Screen.SafetyDashboard.route) }
             )
         }
 
@@ -82,8 +84,14 @@ fun MediBridgeNavGraph(
             )
         }
 
-        // ── Future Module B/C screens — add composable() blocks here ──────────
-        // composable(Screen.SafetyDashboard.route) { SafetyDashboardScreen(...) }
+        // ── Module B: Safety Dashboard ───────────────────────────────────────
+        composable(Screen.SafetyDashboard.route) {
+            SafetyScreen(
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        // ── Future Module C screens — add composable() blocks here ────────────
         // composable(Screen.ScheduleCalendar.route) { ScheduleCalendarScreen(...) }
     }
 }
