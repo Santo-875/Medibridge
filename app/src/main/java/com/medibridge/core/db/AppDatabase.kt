@@ -25,8 +25,13 @@ import com.medibridge.moduleB_safety.data.SafetyCheckEntity
  *   Add new @Entity classes to the [entities] array and bump the version.
  */
 @Database(
-    entities = [MedicationEntity::class, PatientSummaryEntity::class, SafetyCheckEntity::class],
-    version = 4,
+    entities = [
+        MedicationEntity::class,
+        PatientSummaryEntity::class,
+        SafetyCheckEntity::class,
+        RecordingEntity::class
+    ],
+    version = 5,
     exportSchema = false  // Set to true + provide schemaDirectory for production
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -34,6 +39,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun medicationDao(): MedicationDao
     abstract fun patientSummaryDao(): PatientSummaryDao
     abstract fun safetyCheckDao(): SafetyCheckDao
+    abstract fun recordingDao(): RecordingDao
 
     companion object {
         @Volatile

@@ -31,13 +31,18 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        val initialRoute = intent?.getStringExtra("EXTRA_NAV_ROUTE")
+
         setContent {
             val isDarkMode by settingsViewModel.isDarkMode.collectAsState()
 
             // MediBridgeTheme wraps the entire app — all composables inherit the
             // active color scheme. Switching dark mode re-composes the whole tree.
             MediBridgeTheme(darkTheme = isDarkMode) {
-                MainShell(settingsViewModel = settingsViewModel)
+                MainShell(
+                    settingsViewModel = settingsViewModel,
+                    initialRoute = initialRoute
+                )
             }
         }
     }

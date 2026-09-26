@@ -64,14 +64,18 @@ object SafetyEngine {
 
         // 1. Cross-verification against local knowledge base
         val isRecognized = SafetyRules.isRecognized(newMedication.name)
-        val crossVerified = isRecognized
+        val crossVerified = isRecognized && !newMedication.needsVerification
 
-        if (!isRecognized) {
+        if (!isRecognized || newMedication.needsVerification) {
             conflicts.add(
                 MedicationConflict(
                     withMedId = "",
                     type = CONFLICT_TYPE_VERIFICATION,
-                    detail = "Medication '${newMedication.name}' could not be verified against the configured safety knowledge base."
+                    detail = if (!isRecognized) {
+                        "Medication '${newMedication.name}' could not be verified against the configured safety knowledge base."
+                    } else {
+                        "Medication '${newMedication.name}' flagged for clinical verification."
+                    }
                 )
             )
         }
@@ -136,26 +140,34 @@ object SafetyEngine {
         val headline: String
         val summary: String
 
+        val hasInteraction = conflicts.any { it.type == CONFLICT_TYPE_INTERACTION }
+        val hasDuplicate = conflicts.any { it.type == CONFLICT_TYPE_DUPLICATE }
+        val hasOverlap = conflicts.any { it.type == CONFLICT_TYPE_OVERLAP }
+
         when {
+            hasInteraction -> {
+                verdict = SafetyVerdict.INTERACTION
+                headline = if (!crossVerified) "Interaction Detected & Verification Required" else "Potential Interaction Detected"
+                summary = if (!crossVerified) {
+                    "A known medication interaction was identified with active prescriptions, and medication requires clinical verification."
+                } else {
+                    "A known medication interaction was identified with one or more existing prescriptions."
+                }
+            }
+            hasDuplicate -> {
+                verdict = SafetyVerdict.DUPLICATE
+                headline = if (!crossVerified) "Duplicate Detected & Verification Required" else "Duplicate Medication Detected"
+                summary = "This medication or an equivalent active ingredient is already active in the patient's schedule."
+            }
+            hasOverlap -> {
+                verdict = SafetyVerdict.OVERLAP
+                headline = if (!crossVerified) "Overlap Detected & Verification Required" else "Therapeutic Overlap Detected"
+                summary = "This medication shares a pharmacological class or purpose with an existing prescription."
+            }
             !crossVerified -> {
                 verdict = SafetyVerdict.UNVERIFIED
                 headline = "Verification Required"
                 summary = "Medication could not be verified against the configured local knowledge base. Clinical review is required."
-            }
-            conflicts.any { it.type == CONFLICT_TYPE_DUPLICATE } -> {
-                verdict = SafetyVerdict.DUPLICATE
-                headline = "Duplicate Medication Detected"
-                summary = "This medication or an equivalent active ingredient is already active in the patient's schedule."
-            }
-            conflicts.any { it.type == CONFLICT_TYPE_INTERACTION } -> {
-                verdict = SafetyVerdict.INTERACTION
-                headline = "Potential Interaction Detected"
-                summary = "A known medication interaction was identified with one or more existing prescriptions."
-            }
-            conflicts.any { it.type == CONFLICT_TYPE_OVERLAP } -> {
-                verdict = SafetyVerdict.OVERLAP
-                headline = "Therapeutic Overlap Detected"
-                summary = "This medication shares a pharmacological class or purpose with an existing prescription."
             }
             else -> {
                 verdict = SafetyVerdict.SAFE

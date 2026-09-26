@@ -28,6 +28,7 @@ object DemoDataSeeder {
     private fun todayIso(): String = LocalDate.now().toString()
 
     suspend fun seedAll(context: Context) {
+        clearAll(context)
         val db = AppDatabase.getInstance(context)
         val medDao = db.medicationDao()
         val safetyDao = db.safetyCheckDao()
@@ -35,6 +36,28 @@ object DemoDataSeeder {
         seedScenario1_Diabetes(medDao)
         seedScenario2_Hypertension(medDao, safetyDao)
         seedScenario3_ElderlyCaretaker(medDao)
+    }
+
+    suspend fun clearAll(context: Context) {
+        val db = AppDatabase.getInstance(context)
+        db.medicationDao().deleteAll()
+        db.safetyCheckDao().deleteAll()
+        db.patientSummaryDao().deleteAll()
+    }
+
+    suspend fun loadScenario(context: Context, scenarioIndex: Int) {
+        val db = AppDatabase.getInstance(context)
+        val medDao = db.medicationDao()
+        val safetyDao = db.safetyCheckDao()
+
+        clearAll(context)
+
+        when (scenarioIndex) {
+            1 -> seedScenario1_Diabetes(medDao)
+            2 -> seedScenario2_Hypertension(medDao, safetyDao)
+            3 -> seedScenario3_ElderlyCaretaker(medDao)
+            4 -> { /* No Scenario: Starts empty, live scans/notes populate it cleanly */ }
+        }
     }
 
     /**

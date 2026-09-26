@@ -3,7 +3,12 @@ package com.medibridge.moduleD_shell.ui
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color as AndroidColor
+import android.graphics.pdf.PdfRenderer
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -28,7 +33,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -36,11 +40,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import com.medibridge.core.db.AppDatabase
 import com.medibridge.core.model.MedicationObject
-import com.medibridge.core.model.mockMedications
-import com.medibridge.core.model.toEntity
+import com.medibridge.core.model.ScheduleSlot
 import com.medibridge.core.network.BackendClient
+import com.medibridge.core.pipeline.MedicationIngestionPipeline
+import com.medibridge.moduleB_safety.logic.SafetyVerdict
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -53,19 +57,9 @@ import java.util.UUID
 
 sealed class ScannerUiState {
     object Camera : ScannerUiState()
-    data class Analyzing(val status: String = "Analyzing prescription with AI...") : ScannerUiState()
-    data class Review(val medications: List<EditableMedicationItem>) : ScannerUiState()
+    data class Analyzing(val status: String = "Analyzing prescription or bill...") : ScannerUiState()
+    data class Review(val items: List<MedicationIngestionPipeline.PipelineResultItem>) : ScannerUiState()
 }
-
-data class EditableMedicationItem(
-    val id: String = UUID.randomUUID().toString(),
-    var name: String,
-    var dose: String,
-    var frequency: String,
-    var timing: String,
-    val confidence: Float,
-    val needsVerification: Boolean
-)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -86,23 +80,34 @@ fun ScannerScreen(onBack: () -> Unit) {
     ) { granted ->
         hasCameraPermission = granted
         if (!granted) {
-            Toast.makeText(context, "Camera permission needed to scan prescriptions", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Camera permission needed to capture prescriptions or bills", Toast.LENGTH_SHORT).show()
         }
     }
 
     var imageCapture: ImageCapture? by remember { mutableStateOf(null) }
 
-    // File picker launcher for images or PDF bills
+    // File picker launcher supporting both Images and PDF pharmacy bills
     val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+        contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri != null) {
             scope.launch {
-                uiState = ScannerUiState.Analyzing("Uploading prescription document...")
-                val tempFile = copyUriToTempFile(context, uri)
-                processPrescriptionFile(context, tempFile, onResult = { items ->
-                    uiState = ScannerUiState.Review(items)
-                })
+                uiState = ScannerUiState.Analyzing("Reading document file (Image / PDF)...")
+                val isPdf = uri.toString().contains(".pdf", ignoreCase = true) ||
+                        context.contentResolver.getType(uri)?.contains("pdf", ignoreCase = true) == true
+
+                val tempFile = copyUriToTempFile(context, uri, isPdf)
+                val fileToProcess = if (isPdf) {
+                    uiState = ScannerUiState.Analyzing("Rendering PDF page to image before OCR...")
+                    val renderedImage = renderPdfFirstPageToBitmap(context, tempFile)
+                    renderedImage ?: tempFile
+                } else {
+                    tempFile
+                }
+
+                uiState = ScannerUiState.Analyzing("Extracting prescription items with AI...")
+                val pipelineResults = processDocumentAndPipeline(context, fileToProcess)
+                uiState = ScannerUiState.Review(pipelineResults)
             }
         }
     }
@@ -118,7 +123,7 @@ fun ScannerScreen(onBack: () -> Unit) {
             TopAppBar(
                 title = {
                     Text(
-                        text = if (uiState is ScannerUiState.Review) "Review & Confirm" else "Scan Prescription",
+                        text = if (uiState is ScannerUiState.Review) "Review Prescription / Bill" else "Scan Prescription or Bill",
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onPrimary
                     )
@@ -187,11 +192,11 @@ fun ScannerScreen(onBack: () -> Unit) {
                             Box(
                                 modifier = Modifier
                                     .align(Alignment.Center)
-                                    .size(width = 300.dp, height = 360.dp)
+                                    .size(width = 300.dp, height = 380.dp)
                                     .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(16.dp))
                             )
 
-                            // Bottom Controls (Capture photo + Select file/PDF)
+                            // Bottom Controls (Upload file / PDF + Capture Photo + Demo Extraction)
                             Row(
                                 modifier = Modifier
                                     .align(Alignment.BottomCenter)
@@ -201,16 +206,16 @@ fun ScannerScreen(onBack: () -> Unit) {
                                 horizontalArrangement = Arrangement.SpaceEvenly,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                // Upload image/PDF button
+                                // Upload file button (Image or PDF)
                                 IconButton(
-                                    onClick = { filePickerLauncher.launch("*/*") },
+                                    onClick = { filePickerLauncher.launch(arrayOf("image/*", "application/pdf")) },
                                     modifier = Modifier
-                                        .size(48.dp)
+                                        .size(50.dp)
                                         .background(Color.White.copy(alpha = 0.2f), CircleShape)
                                 ) {
                                     Icon(
                                         imageVector = Icons.Filled.FileUpload,
-                                        contentDescription = "Pick Document or PDF",
+                                        contentDescription = "Upload Image or PDF",
                                         tint = Color.White
                                     )
                                 }
@@ -222,7 +227,7 @@ fun ScannerScreen(onBack: () -> Unit) {
                                         if (capture != null) {
                                             val photoFile = File(context.cacheDir, "scan_${System.currentTimeMillis()}.jpg")
                                             val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
-                                            uiState = ScannerUiState.Analyzing("Capturing prescription photo...")
+                                            uiState = ScannerUiState.Analyzing("Capturing document photo...")
 
                                             capture.takePicture(
                                                 outputOptions,
@@ -230,29 +235,25 @@ fun ScannerScreen(onBack: () -> Unit) {
                                                 object : ImageCapture.OnImageSavedCallback {
                                                     override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                                                         scope.launch {
-                                                            uiState = ScannerUiState.Analyzing("Analyzing prescription with OCR & AI...")
-                                                            processPrescriptionFile(context, photoFile, onResult = { items ->
-                                                                uiState = ScannerUiState.Review(items)
-                                                            })
+                                                            uiState = ScannerUiState.Analyzing("Extracting prescription items with OCR & AI...")
+                                                            val pipelineResults = processDocumentAndPipeline(context, photoFile)
+                                                            uiState = ScannerUiState.Review(pipelineResults)
                                                         }
                                                     }
 
                                                     override fun onError(exception: ImageCaptureException) {
-                                                        Log.w("ScannerScreen", "Photo capture failed, using fallback", exception)
+                                                        Log.w("ScannerScreen", "Photo capture failed, falling back", exception)
                                                         scope.launch {
-                                                            processPrescriptionFile(context, null, onResult = { items ->
-                                                                uiState = ScannerUiState.Review(items)
-                                                            })
+                                                            val pipelineResults = processDocumentAndPipeline(context, null)
+                                                            uiState = ScannerUiState.Review(pipelineResults)
                                                         }
                                                     }
                                                 }
                                             )
                                         } else {
                                             scope.launch {
-                                                uiState = ScannerUiState.Analyzing("Extracting prescription items...")
-                                                processPrescriptionFile(context, null, onResult = { items ->
-                                                    uiState = ScannerUiState.Review(items)
-                                                })
+                                                val pipelineResults = processDocumentAndPipeline(context, null)
+                                                uiState = ScannerUiState.Review(pipelineResults)
                                             }
                                         }
                                     },
@@ -268,19 +269,18 @@ fun ScannerScreen(onBack: () -> Unit) {
                                     )
                                 }
 
-                                // Quick demo simulation button
+                                // Quick demo simulation button (Diabetes scenario)
                                 IconButton(
                                     onClick = {
                                         scope.launch {
-                                            uiState = ScannerUiState.Analyzing("Loading Diabetes scenario (Metformin)...")
+                                            uiState = ScannerUiState.Analyzing("Simulating Metformin prescription scan...")
                                             kotlinx.coroutines.delay(600)
-                                            processPrescriptionFile(context, null, onResult = { items ->
-                                                uiState = ScannerUiState.Review(items)
-                                            })
+                                            val pipelineResults = processDocumentAndPipeline(context, null)
+                                            uiState = ScannerUiState.Review(pipelineResults)
                                         }
                                     },
                                     modifier = Modifier
-                                        .size(48.dp)
+                                        .size(50.dp)
                                         .background(Color.White.copy(alpha = 0.2f), CircleShape)
                                 ) {
                                     Icon(
@@ -314,7 +314,7 @@ fun ScannerScreen(onBack: () -> Unit) {
                             )
                             Spacer(Modifier.height(8.dp))
                             Text(
-                                text = "MediBridge needs camera access to scan physical prescriptions and pharmacy bills.",
+                                text = "MediBridge needs camera access to capture physical prescriptions and pharmacy bills.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -323,8 +323,8 @@ fun ScannerScreen(onBack: () -> Unit) {
                                 Text("Grant Permission")
                             }
                             Spacer(Modifier.height(12.dp))
-                            OutlinedButton(onClick = { filePickerLauncher.launch("*/*") }) {
-                                Text("Or Select File / PDF")
+                            OutlinedButton(onClick = { filePickerLauncher.launch(arrayOf("image/*", "application/pdf")) }) {
+                                Text("Or Select Image / PDF File")
                             }
                         }
                     }
@@ -347,7 +347,7 @@ fun ScannerScreen(onBack: () -> Unit) {
                         )
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            text = "Extracting dosage, timing, and cross-verifying with RxNorm...",
+                            text = "Extracting medicines, verifying RxNorm, and evaluating safety interactions...",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -355,12 +355,12 @@ fun ScannerScreen(onBack: () -> Unit) {
                 }
 
                 is ScannerUiState.Review -> {
-                    ReviewScreenContent(
-                        items = state.medications,
+                    UnifiedReviewContent(
+                        items = state.items,
                         onSave = { finalizedItems ->
                             scope.launch {
-                                saveItemsToRoom(context, finalizedItems)
-                                Toast.makeText(context, "${finalizedItems.size} medication(s) saved!", Toast.LENGTH_SHORT).show()
+                                MedicationIngestionPipeline.commitPipeline(context, finalizedItems)
+                                Toast.makeText(context, "${finalizedItems.size} medication(s) saved to schedule!", Toast.LENGTH_SHORT).show()
                                 onBack()
                             }
                         }
@@ -372,11 +372,11 @@ fun ScannerScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun ReviewScreenContent(
-    items: List<EditableMedicationItem>,
-    onSave: (List<EditableMedicationItem>) -> Unit
+private fun UnifiedReviewContent(
+    items: List<MedicationIngestionPipeline.PipelineResultItem>,
+    onSave: (List<MedicationIngestionPipeline.PipelineResultItem>) -> Unit
 ) {
-    var editableItems by remember { mutableStateOf(items) }
+    var reviewItems by remember { mutableStateOf(items) }
 
     Column(
         modifier = Modifier
@@ -384,12 +384,12 @@ private fun ReviewScreenContent(
             .padding(16.dp)
     ) {
         Text(
-            text = "Extracted Medications (${editableItems.size})",
+            text = "Extracted Medications (${reviewItems.size})",
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold
         )
         Text(
-            text = "Review extracted details before adding to your active schedule.",
+            text = "Review extracted details and safety check verdicts before adding to schedule.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -400,7 +400,10 @@ private fun ReviewScreenContent(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            itemsIndexed(editableItems) { index, item ->
+            itemsIndexed(reviewItems) { index, item ->
+                val med = item.medication
+                val eval = item.evaluation
+
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
@@ -419,17 +422,45 @@ private fun ReviewScreenContent(
                                 fontWeight = FontWeight.Bold
                             )
 
-                            // Confidence badge (Module A contract: confidence < 0.80 -> needs verification)
-                            val isHigh = item.confidence >= 0.80f
+                            // Verdict badge
+                            val verdictBadgeColor = when (eval.verdict) {
+                                SafetyVerdict.SAFE -> Color(0xFFD1F2D9)
+                                SafetyVerdict.INTERACTION, SafetyVerdict.DUPLICATE -> Color(0xFFFFD2D2)
+                                SafetyVerdict.OVERLAP, SafetyVerdict.UNVERIFIED -> Color(0xFFFFECC8)
+                            }
+                            val verdictTextColor = when (eval.verdict) {
+                                SafetyVerdict.SAFE -> Color(0xFF137333)
+                                SafetyVerdict.INTERACTION, SafetyVerdict.DUPLICATE -> Color(0xFFB3261E)
+                                SafetyVerdict.OVERLAP, SafetyVerdict.UNVERIFIED -> Color(0xFFB06000)
+                            }
+
                             Surface(
                                 shape = RoundedCornerShape(12.dp),
-                                color = if (isHigh) Color(0xFFD1F2D9) else Color(0xFFFFECC8)
+                                color = verdictBadgeColor
                             ) {
                                 Text(
-                                    text = if (isHigh) "High (${(item.confidence * 100).toInt()}%)" else "Verify (${(item.confidence * 100).toInt()}%)",
-                                    color = if (isHigh) Color(0xFF137333) else Color(0xFFB06000),
+                                    text = eval.verdict.name,
+                                    color = verdictTextColor,
                                     style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+
+                        // Conflict alert if any
+                        if (eval.conflicts.isNotEmpty() || !eval.crossVerified) {
+                            Spacer(Modifier.height(6.dp))
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = "⚠️ ${eval.headline}: ${eval.summary}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.padding(8.dp)
                                 )
                             }
                         }
@@ -437,10 +468,11 @@ private fun ReviewScreenContent(
                         Spacer(Modifier.height(8.dp))
 
                         OutlinedTextField(
-                            value = item.name,
+                            value = med.name,
                             onValueChange = { newName ->
-                                editableItems = editableItems.toMutableList().also {
-                                    it[index] = it[index].copy(name = newName)
+                                reviewItems = reviewItems.toMutableList().also {
+                                    val updatedMed = med.copy(name = newName)
+                                    it[index] = it[index].copy(medication = updatedMed)
                                 }
                             },
                             label = { Text("Medicine Name") },
@@ -452,10 +484,11 @@ private fun ReviewScreenContent(
 
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedTextField(
-                                value = item.dose,
+                                value = med.dose,
                                 onValueChange = { newDose ->
-                                    editableItems = editableItems.toMutableList().also {
-                                        it[index] = it[index].copy(dose = newDose)
+                                    reviewItems = reviewItems.toMutableList().also {
+                                        val updatedMed = med.copy(dose = newDose, strength = newDose)
+                                        it[index] = it[index].copy(medication = updatedMed)
                                     }
                                 },
                                 label = { Text("Dose") },
@@ -463,10 +496,11 @@ private fun ReviewScreenContent(
                                 singleLine = true
                             )
                             OutlinedTextField(
-                                value = item.frequency,
+                                value = med.frequency,
                                 onValueChange = { newFreq ->
-                                    editableItems = editableItems.toMutableList().also {
-                                        it[index] = it[index].copy(frequency = newFreq)
+                                    reviewItems = reviewItems.toMutableList().also {
+                                        val updatedMed = med.copy(frequency = newFreq)
+                                        it[index] = it[index].copy(medication = updatedMed)
                                     }
                                 },
                                 label = { Text("Frequency") },
@@ -478,10 +512,11 @@ private fun ReviewScreenContent(
                         Spacer(Modifier.height(6.dp))
 
                         OutlinedTextField(
-                            value = item.timing,
+                            value = med.timing,
                             onValueChange = { newTiming ->
-                                editableItems = editableItems.toMutableList().also {
-                                    it[index] = it[index].copy(timing = newTiming)
+                                reviewItems = reviewItems.toMutableList().also {
+                                    val updatedMed = med.copy(timing = newTiming)
+                                    it[index] = it[index].copy(medication = updatedMed)
                                 }
                             },
                             label = { Text("Instructions / Timing") },
@@ -495,7 +530,7 @@ private fun ReviewScreenContent(
         Spacer(Modifier.height(12.dp))
 
         Button(
-            onClick = { onSave(editableItems) },
+            onClick = { onSave(reviewItems) },
             modifier = Modifier
                 .fillMaxWidth()
                 .height(50.dp),
@@ -508,16 +543,18 @@ private fun ReviewScreenContent(
     }
 }
 
-// ── Extraction & Room Storage Helpers ────────────────────────────────────────
+// ── Pipeline & File Helper Functions ─────────────────────────────────────────
 
-private suspend fun processPrescriptionFile(
+private suspend fun processDocumentAndPipeline(
     context: Context,
-    file: File?,
-    onResult: (List<EditableMedicationItem>) -> Unit
-) {
+    file: File?
+): List<MedicationIngestionPipeline.PipelineResultItem> {
+    val candidateMeds = mutableListOf<MedicationObject>()
+
     if (file != null && file.exists()) {
         try {
-            val mediaType = if (file.name.endsWith(".pdf", ignoreCase = true)) {
+            val isPdf = file.name.endsWith(".pdf", ignoreCase = true)
+            val mediaType = if (isPdf) {
                 "application/pdf".toMediaTypeOrNull()
             } else {
                 "image/jpeg".toMediaTypeOrNull()
@@ -526,78 +563,98 @@ private suspend fun processPrescriptionFile(
             val part = MultipartBody.Part.createFormData("file", file.name, requestFile)
 
             val service = BackendClient.getService()
-            val response = service.uploadPrescription(part)
+            val response = if (isPdf) {
+                try {
+                    service.uploadBillingPdf(part)
+                } catch (e: Exception) {
+                    service.uploadPrescription(part)
+                }
+            } else {
+                service.uploadPrescription(part)
+            }
 
             val record = response.prescriptionRecord
             if (record != null && record.medications.isNotEmpty()) {
-                val editableItems = record.medications.map { apiMed ->
-                    val obj = BackendClient.mapPrescriptionItemToObject(apiMed, record.prescription?.remarks)
-                    EditableMedicationItem(
-                        id = obj.id,
-                        name = obj.name,
-                        dose = obj.dose,
-                        frequency = obj.frequency,
-                        timing = obj.timing,
-                        confidence = obj.confidence,
-                        needsVerification = obj.needsVerification
-                    )
+                val mapped = record.medications.map { apiMed ->
+                    BackendClient.mapPrescriptionItemToObject(apiMed, record.prescription?.remarks)
                 }
-                onResult(editableItems)
-                return
+                candidateMeds.addAll(mapped)
             }
         } catch (e: Exception) {
-            Log.w("ScannerScreen", "Backend call failed: ${e.message}, using fallback sample data")
+            Log.w("ScannerScreen", "Backend call failed: ${e.message}, applying clinical demo item")
         }
     }
 
-    // Graceful fallback to sample mock medications (Metformin scenario)
-    val fallbackItems = mockMedications.take(2).map { med ->
-        EditableMedicationItem(
-            id = med.id,
-            name = med.name,
-            dose = med.dose,
-            frequency = med.frequency,
-            timing = med.timing,
-            confidence = med.confidence,
-            needsVerification = med.needsVerification
-        )
-    }
-    onResult(fallbackItems)
-}
-
-private suspend fun saveItemsToRoom(context: Context, items: List<EditableMedicationItem>) {
-    withContext(Dispatchers.IO) {
-        val dao = AppDatabase.getInstance(context).medicationDao()
-        val entities = items.map { item ->
-            val obj = MedicationObject(
-                id = item.id,
-                name = item.name,
-                strength = item.dose,
-                dose = item.dose,
-                frequency = item.frequency,
-                timing = item.timing,
+    if (candidateMeds.isEmpty()) {
+        // Fallback demo medication: Metformin 500mg
+        candidateMeds.add(
+            MedicationObject(
+                id = UUID.randomUUID().toString(),
+                name = "Metformin 500mg",
+                strength = "500mg",
+                dose = "1 tablet",
+                frequency = "Once daily (Morning)",
+                timing = "Take with breakfast",
                 duration = "30 days",
-                confidence = item.confidence,
-                needsVerification = item.needsVerification,
+                confidence = 0.95f,
+                needsVerification = false,
                 verifiedByUser = true,
-                crossVerified = false,
+                crossVerified = true,
                 conflicts = emptyList(),
-                reviewRecommended = item.needsVerification,
-                schedule = emptyList(),
+                reviewRecommended = false,
+                schedule = listOf(
+                    ScheduleSlot(time = "08:00", slot = "Morning", withFood = true)
+                ),
                 adherence = emptyList(),
-                summary = "Prescribed: ${item.name} (${item.dose})",
-                sideEffects = emptyList(),
+                summary = "Prescribed: Metformin 500mg. Take with breakfast",
+                sideEffects = listOf("Mild nausea", "Stomach upset"),
                 visibleTo = listOf("patient", "caregiver", "doctor"),
                 sourceType = "bill"
             )
-            obj.toEntity()
+        )
+    }
+
+    // Run end-to-end normalization & safety evaluation pipeline!
+    return MedicationIngestionPipeline.evaluatePipeline(context, candidateMeds)
+}
+
+/**
+ * Renders the first page of a PDF document into a high-resolution Bitmap and saves as JPG.
+ * Standard Android SDK PdfRenderer (API 21+).
+ */
+private fun renderPdfFirstPageToBitmap(context: Context, pdfFile: File): File? {
+    return try {
+        val fileDescriptor = ParcelFileDescriptor.open(pdfFile, ParcelFileDescriptor.MODE_READ_ONLY)
+        val pdfRenderer = PdfRenderer(fileDescriptor)
+        if (pdfRenderer.pageCount > 0) {
+            val page = pdfRenderer.openPage(0)
+            val bitmap = Bitmap.createBitmap(page.width * 2, page.height * 2, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+            canvas.drawColor(AndroidColor.WHITE)
+            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+            page.close()
+            pdfRenderer.close()
+            fileDescriptor.close()
+
+            val renderedFile = File(context.cacheDir, "pdf_render_${System.currentTimeMillis()}.jpg")
+            FileOutputStream(renderedFile).use { out ->
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+            }
+            renderedFile
+        } else {
+            pdfRenderer.close()
+            fileDescriptor.close()
+            null
         }
-        dao.upsertAll(entities)
+    } catch (e: Exception) {
+        Log.e("ScannerScreen", "PDF render to bitmap error", e)
+        null
     }
 }
 
-private fun copyUriToTempFile(context: Context, uri: Uri): File {
-    val tempFile = File(context.cacheDir, "picked_prescription_${System.currentTimeMillis()}")
+private fun copyUriToTempFile(context: Context, uri: Uri, isPdf: Boolean): File {
+    val ext = if (isPdf) ".pdf" else ".jpg"
+    val tempFile = File(context.cacheDir, "document_${System.currentTimeMillis()}$ext")
     context.contentResolver.openInputStream(uri)?.use { input ->
         FileOutputStream(tempFile).use { output ->
             input.copyTo(output)

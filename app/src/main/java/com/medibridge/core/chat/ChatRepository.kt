@@ -53,6 +53,12 @@ class ChatRepository(private val context: Context) {
             emptyList()
         }
 
+        val recordings = try {
+            db.recordingDao().getAllRecordingsDirect()
+        } catch (e: Exception) {
+            emptyList()
+        }
+
         // 2. Build structured RAG context block
         val contextBlock = buildString {
             appendLine("=== VERIFIED PATIENT MEDICATIONS ===")
@@ -89,6 +95,17 @@ class ChatRepository(private val context: Context) {
                 appendLine()
             }
 
+            if (recordings.isNotEmpty()) {
+                appendLine("=== PAST CONSULTATION RECORDINGS ===")
+                recordings.take(3).forEach { rec ->
+                    appendLine("• Audio Summary: ${rec.summary}")
+                    if (rec.transcript.isNotBlank()) {
+                        appendLine("  Transcript Preview: ${rec.transcript.take(150)}...")
+                    }
+                }
+                appendLine()
+            }
+
             if (patientSummaries.isNotEmpty()) {
                 appendLine("=== CLINICAL SUMMARY ===")
                 patientSummaries.forEach { ps ->
@@ -106,7 +123,7 @@ class ChatRepository(private val context: Context) {
                     Answer the patient's question accurately, concisely, and with warmth, using ONLY the verified medical context below.
                     
                     Rules:
-                    1. Base your answer strictly on the patient's actual medications, schedule, and safety notes.
+                    1. Base your answer strictly on the patient's actual medications, schedule, safety flags, and consultation recordings.
                     2. If asked about taking medications or missed doses, provide clear, safe advice.
                     3. Highlight any active conflicts or precautions if relevant.
                     4. Keep replies clear and easy to read (use 2-3 short bullet points when listing actions).
@@ -138,6 +155,87 @@ class ChatRepository(private val context: Context) {
         // 4. Local RAG Fallback: Keyword & Entity matching over Room DB
         val lowerQuery = trimmedQuery.lowercase()
         return@withContext buildLocalRagResponse(lowerQuery, medications, contextBlock)
+    }
+
+    /**
+     * Summarizes the chat message history + relevant DB rows for the session.
+     */
+    suspend fun summarizeSession(chatHistory: List<String>): String = withContext(Dispatchers.IO) {
+        val medications = try {
+            medicationDao.getAllMedications().first().map { it.fromEntity() }
+        } catch (e: Exception) {
+            emptyList()
+        }
+
+        val safetyChecks = try {
+            safetyCheckDao.getAllSafetyChecksDirect()
+        } catch (e: Exception) {
+            emptyList()
+        }
+
+        val historyText = chatHistory.joinToString("\n")
+
+        val apiKey = GeminiConfigProvider.getApiKey()
+        if (!apiKey.isNullOrBlank() && apiKey != "your_gemini_api_key_here") {
+            try {
+                val prompt = """
+                    You are Medi, the clinical AI assistant for MediBridge.
+                    Summarize this consultation chat session into a structured, patient-friendly summary.
+                    
+                    --- RELEVANT CLINICAL DATA ---
+                    Medications: ${medications.joinToString { "${it.name} (${it.dose}, ${it.frequency})" }}
+                    Safety Flags: ${safetyChecks.filter { it.findingType != "SAFE" }.joinToString { "${it.medicineA}+${it.medicineB}: ${it.result}" }}
+                    
+                    --- CONVERSATION TRANSCRIPT ---
+                    $historyText
+                    
+                    Provide the summary in 3 concise sections:
+                    1. **Discussion Overview** (topics covered)
+                    2. **Medication Schedule & Instructions**
+                    3. **Key Precautions & Action Items**
+                """.trimIndent()
+
+                val request = GeminiApiClient.buildTextRequest(prompt, jsonOutput = false)
+                val response = GeminiApiClient.service.generateContent(
+                    model = "gemini-1.5-flash",
+                    apiKey = apiKey,
+                    request = request
+                )
+
+                val replyText = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
+                if (!replyText.isNullOrBlank()) {
+                    return@withContext "📋 **Consultation Session Summary**:\n\n${replyText.trim()}"
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Gemini summarization failed: ${e.message}, falling back to local summary")
+            }
+        }
+
+        // Local summarization fallback
+        val medSummary = if (medications.isNotEmpty()) {
+            medications.joinToString("\n") { "• **${it.name}**: ${it.dose} (${it.timing})" }
+        } else {
+            "• No active medications registered."
+        }
+
+        val conflictSummary = safetyChecks.filter { it.findingType != "SAFE" }
+            .take(2)
+            .joinToString("\n") { "• ⚠️ ${it.medicineA} + ${it.medicineB}: ${it.aiMessage}" }
+            .ifBlank { "• No critical medication interaction warnings identified." }
+
+        """
+        📋 **Session Clinical Summary**:
+        
+        **1. Discussion Overview**:
+        • Reviewed ${medications.size} active medication regimen(s) and answered dosage queries.
+        
+        **2. Active Regimen & Schedule**:
+        $medSummary
+        
+        **3. Precautions & Actions**:
+        $conflictSummary
+        • Consult your healthcare provider before adjusting dosages.
+        """.trimIndent()
     }
 
     private fun buildLocalRagResponse(

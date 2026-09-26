@@ -29,13 +29,21 @@ import com.medibridge.moduleD_shell.viewmodel.SettingsViewModel
  *                           at the Activity level (above the NavGraph).
  */
 @Composable
-fun MainShell(settingsViewModel: SettingsViewModel) {
+fun MainShell(
+    settingsViewModel: SettingsViewModel,
+    initialRoute: String? = null
+) {
     val navController = rememberNavController()
+    LaunchedEffect(initialRoute) {
+        if (!initialRoute.isNullOrBlank()) {
+            navController.navigate(initialRoute)
+        }
+    }
     val navBackStack  by navController.currentBackStackEntryAsState()
     val currentDest   = navBackStack?.destination
 
     // Screens where the bottom nav should be hidden (full-screen flows)
-    val hideBottomNavRoutes = setOf(Screen.Scanner.route, Screen.Bill.route, Screen.Chatbot.route)
+    val hideBottomNavRoutes = setOf(Screen.Scanner.route, Screen.Chatbot.route)
     val showBottomNav       = currentDest?.route !in hideBottomNavRoutes
 
     Scaffold(

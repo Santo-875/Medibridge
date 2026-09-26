@@ -17,8 +17,7 @@ sealed class Screen(val route: String) {
     object Reminders   : Screen("reminders")
     object Settings    : Screen("settings")
     object Chatbot     : Screen("chatbot")       // Opens from Home FAB
-    object Bill        : Screen("bill")          // Opens from Home top-bar bill icon
-    object Scanner     : Screen("scanner")       // Opens from Home top-bar OCR scanner icon
+    object Scanner     : Screen("scanner")       // Opens from Home top-bar prescription/bill scanner icon
 
     // ── Module A: Prescription (add more as Module A expands) ─────────────────
     // object PrescriptionDetail : Screen("prescription_detail/{medId}") {

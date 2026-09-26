@@ -21,9 +21,17 @@ interface MedicationDao {
     @Query("SELECT * FROM medications ORDER BY name ASC")
     fun getAllMedications(): Flow<List<MedicationEntity>>
 
+    /** Fetch all medications directly (suspend function). */
+    @Query("SELECT * FROM medications ORDER BY name ASC")
+    suspend fun getAllMedicationsDirect(): List<MedicationEntity>
+
     /** Fetch a single medication by its ID. */
     @Query("SELECT * FROM medications WHERE id = :id")
     suspend fun getMedicationById(id: String): MedicationEntity?
+
+    /** Updates adherence JSON column directly. */
+    @Query("UPDATE medications SET adherence = :adherenceJson WHERE id = :id")
+    suspend fun updateAdherence(id: String, adherenceJson: String)
 
     /**
      * Insert or replace a medication.

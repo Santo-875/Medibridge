@@ -274,6 +274,24 @@ class SafetyEngineTest {
         assertTrue(dupResult1.reviewRecommended)
     }
 
+    // ── 8. Verdict Priority Test ─────────────────────────────────────────────
+    @Test
+    fun testVerdictPriority_InteractionOutranksUnverified() {
+        val interactionScenario = MockSafetyRepository.demoScenarios.first { it.id == "case-4" }
+        // Force needsVerification to true so it qualifies as unverified
+        val unverifiedWithInteraction = interactionScenario.candidateMedication.copy(
+            needsVerification = true,
+            crossVerified = false
+        )
+        val result = SafetyEngine.evaluateSafety(unverifiedWithInteraction, baselineHistory)
+
+        // Must be INTERACTION, NOT UNVERIFIED
+        assertEquals(SafetyVerdict.INTERACTION, result.verdict)
+        assertTrue("Headline must reflect both interaction and verification requirement",
+            result.headline.contains("Interaction") && result.headline.contains("Verification Required"))
+        assertTrue(result.reviewRecommended)
+    }
+
     // In-memory fake DAO implementation for isolated repository unit testing
     private class FakeSafetyCheckDao : SafetyCheckDao {
         private val records = mutableListOf<SafetyCheckEntity>()

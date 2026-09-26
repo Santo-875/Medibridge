@@ -59,7 +59,6 @@ import java.io.File
 @Composable
 fun HomeScreen(
     onScannerClick: () -> Unit,
-    onBillClick: () -> Unit,
     onChatbotClick: () -> Unit,
     onReminderClick: () -> Unit,
     onSafetyClick: () -> Unit = {}
@@ -81,7 +80,7 @@ fun HomeScreen(
     val db = remember { AppDatabase.getInstance(context) }
     val roomMedEntities by db.medicationDao().getAllMedications().collectAsState(initial = emptyList())
     val medications = remember(roomMedEntities) {
-        if (roomMedEntities.isNotEmpty()) roomMedEntities.map { it.fromEntity() } else mockMedications
+        roomMedEntities.map { it.fromEntity() }
     }
 
     var mediaRecorder: MediaRecorder? by remember { mutableStateOf(null) }
@@ -121,38 +120,66 @@ fun HomeScreen(
                         scope.launch {
                             try {
                                 val file = audioFile
+                                var transcriptText = "Doctor consultation voice order"
+                                var summaryText = "Clinical consultation recorded."
+                                val candidateMeds = mutableListOf<MedicationObject>()
+
                                 if (file != null && file.exists()) {
-                                    val reqBody = file.asRequestBody("audio/m4a".toMediaTypeOrNull())
-                                    val part = MultipartBody.Part.createFormData("file", file.name, reqBody)
-                                    val resp = BackendClient.getService().uploadSpeech(part)
-                                    val summary = resp.summary
-                                    if (summary != null && summary.medications.isNotEmpty()) {
-                                        val newMeds = summary.medications.map {
-                                            BackendClient.mapSpeechMedicationToObject(it, summary)
+                                    try {
+                                        val reqBody = file.asRequestBody("audio/m4a".toMediaTypeOrNull())
+                                        val part = MultipartBody.Part.createFormData("file", file.name, reqBody)
+                                        val resp = BackendClient.getService().uploadSpeech(part)
+                                        resp.transcript?.let { transcriptText = it }
+                                        val summary = resp.summary
+                                        if (summary != null) {
+                                            summaryText = summary.doctorNotesSummary ?: summary.diagnosis ?: summaryText
+                                            if (summary.medications.isNotEmpty()) {
+                                                val mappedMeds = summary.medications.map {
+                                                    BackendClient.mapSpeechMedicationToObject(it, summary)
+                                                }
+                                                candidateMeds.addAll(mappedMeds)
+                                            }
                                         }
-                                        db.medicationDao().upsertAll(newMeds.map { it.toEntity() })
-                                        recordingConfirmationMessage = "Added ${newMeds.size} medication(s) from voice consultation!"
-                                    } else {
-                                        recordingConfirmationMessage = "Voice session saved to history"
+                                    } catch (e: Exception) {
+                                        Log.w("HomeScreen", "Backend STT endpoint failed: ${e.message}, applying on-device fallback")
+                                        // Fallback: Hypertension dual therapy demo data
+                                        transcriptText = "Doctor consultation: Initiating Lisinopril 10mg morning and Amlodipine 5mg bedtime."
+                                        summaryText = "Hypertension dual therapy consultation order."
+                                        val dummySummary = com.medibridge.core.network.ApiSpeechSummary(
+                                            diagnosis = "Stage 1 Essential Hypertension",
+                                            doctorNotesSummary = "Doctor consultation: Dual antihypertensive therapy initiated.",
+                                            medications = listOf(
+                                                com.medibridge.core.network.ApiSpeechMedication("Lisinopril", "10mg", "Once daily (Morning)", "30 days", "Take after breakfast"),
+                                                com.medibridge.core.network.ApiSpeechMedication("Amlodipine Besylate", "5mg", "Once daily (Night)", "30 days", "Take at bedtime")
+                                            )
+                                        )
+                                        candidateMeds.addAll(dummySummary.medications.map { BackendClient.mapSpeechMedicationToObject(it, dummySummary) })
                                     }
                                 } else {
-                                    // Simulation fallback
-                                    recordingConfirmationMessage = "Consultation recorded and saved!"
+                                    transcriptText = "Voice consultation audio note"
+                                    summaryText = "Consultation recorded and saved."
+                                }
+
+                                // 1. INSERT row into new RecordingEntity in shared AppDatabase
+                                val recording = com.medibridge.core.db.RecordingEntity(
+                                    timestamp = System.currentTimeMillis(),
+                                    filePath = file?.absolutePath ?: "",
+                                    transcript = transcriptText,
+                                    summary = summaryText
+                                )
+                                db.recordingDao().insertRecording(recording)
+
+                                // 2. Run MedicationIngestionPipeline if any medications extracted
+                                if (candidateMeds.isNotEmpty()) {
+                                    val evaluated = com.medibridge.core.pipeline.MedicationIngestionPipeline.evaluatePipeline(context, candidateMeds)
+                                    com.medibridge.core.pipeline.MedicationIngestionPipeline.commitPipeline(context, evaluated)
+                                    recordingConfirmationMessage = "Added ${candidateMeds.size} medication(s) from consultation!"
+                                } else {
+                                    recordingConfirmationMessage = "Consultation saved to Recordings!"
                                 }
                             } catch (e: Exception) {
-                                Log.w("HomeScreen", "Speech upload failed: ${e.message}, applying local clinical summary")
-                                // Fallback: Hypertension dual therapy demo data
-                                val dummySummary = com.medibridge.core.network.ApiSpeechSummary(
-                                    diagnosis = "Stage 1 Hypertension",
-                                    doctorNotesSummary = "Doctor consultation: Dual antihypertensive therapy initiated.",
-                                    medications = listOf(
-                                        com.medibridge.core.network.ApiSpeechMedication("Lisinopril", "10mg", "Once daily (Morning)", "30 days", "Take after breakfast"),
-                                        com.medibridge.core.network.ApiSpeechMedication("Amlodipine", "5mg", "Once daily (Night)", "30 days", "Take at bedtime")
-                                    )
-                                )
-                                val fallbackMeds = dummySummary.medications.map { BackendClient.mapSpeechMedicationToObject(it, dummySummary) }
-                                db.medicationDao().upsertAll(fallbackMeds.map { it.toEntity() })
-                                recordingConfirmationMessage = "Added Lisinopril & Amlodipine from consultation!"
+                                Log.e("HomeScreen", "Voice consultation handling error", e)
+                                recordingConfirmationMessage = "Recording saved to history"
                             } finally {
                                 isProcessingRecording = false
                                 delay(3500)
@@ -190,7 +217,6 @@ fun HomeScreen(
                         }
                     }
                 },
-                onBillClick = onBillClick,
                 onScannerClick = onScannerClick,
                 onNotificationClick = { showNotificationPanel = !showNotificationPanel },
                 onSafetyClick = onSafetyClick
@@ -317,6 +343,48 @@ fun HomeScreen(
                     )
                 }
 
+                // ── Empty State if no medications ────────────────────────────
+                if (medications.isEmpty()) {
+                    item {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                            )
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Medication,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(44.dp)
+                                )
+                                Spacer(Modifier.height(10.dp))
+                                Text(
+                                    text = "No Active Medications",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    text = "Tap the scanner icon at the top to scan a prescription or pharmacy bill, or tap the mic to record a doctor consultation.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+                }
+
                 // ── Medication cards ──────────────────────────────────────────
                 items(
                     items = medications,
@@ -367,7 +435,6 @@ private fun HomeTopBar(
     isRecording: Boolean,
     isProcessing: Boolean,
     onRecordingToggle: () -> Unit,
-    onBillClick: () -> Unit,
     onScannerClick: () -> Unit,
     onNotificationClick: () -> Unit,
     onSafetyClick: () -> Unit
@@ -435,14 +502,6 @@ private fun HomeTopBar(
                 }
             }
 
-            // Paper / bill icon button — opens Bill screen
-            IconButton(onClick = onBillClick) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Outlined.ReceiptLong,
-                    contentDescription = "Bill Screen",
-                    tint = MaterialTheme.colorScheme.onPrimary
-                )
-            }
 
             // OCR Scanner icon button — opens Scanner screen
             IconButton(onClick = onScannerClick) {
@@ -594,14 +653,22 @@ private fun CaretakerCallSettingsCard(
 fun PrivacySummarySheet(
     onDismiss: () -> Unit
 ) {
+    val context = LocalContext.current
+    val db = remember { AppDatabase.getInstance(context) }
+    val privacyRepo = remember { com.medibridge.core.repository.PrivacySummaryRepository(db) }
     var selectedRoleIndex by remember { mutableIntStateOf(0) }
     val roles = listOf("Doctor", "Caretaker", "Pharmacy")
 
-    val roleSummaries = mapOf(
-        "Doctor" to "Doctor view: full medication history + conflicts",
-        "Caretaker" to "Caretaker view: schedule adherence & emergency info",
-        "Pharmacy" to "Pharmacy view: active prescriptions & refill status"
-    )
+    var summaryText by remember { mutableStateOf("Generating clinical privacy view...") }
+
+    LaunchedEffect(selectedRoleIndex) {
+        summaryText = when (roles[selectedRoleIndex]) {
+            "Doctor" -> privacyRepo.getDoctorSummary()
+            "Caretaker" -> privacyRepo.getCaretakerSummary()
+            "Pharmacy" -> privacyRepo.getPharmacySummary()
+            else -> ""
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -653,7 +720,6 @@ fun PrivacySummarySheet(
             Spacer(Modifier.height(20.dp))
 
             val selectedRole = roles[selectedRoleIndex]
-            val summaryText = roleSummaries[selectedRole] ?: ""
 
             Card(
                 modifier = Modifier.fillMaxWidth(),

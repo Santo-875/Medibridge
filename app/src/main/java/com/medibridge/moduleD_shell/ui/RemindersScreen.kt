@@ -37,7 +37,7 @@ fun RemindersScreen(
     viewModel: ScheduleViewModel = viewModel()
 ) {
     val liveReminders by viewModel.reminders.collectAsState()
-    val displayReminders = if (liveReminders.isNotEmpty()) liveReminders else dummyReminders
+    val displayReminders = liveReminders
 
     Scaffold(
         topBar = {
@@ -82,13 +82,54 @@ fun RemindersScreen(
                 )
             }
 
-            items(displayReminders, key = { it.id }) { reminder ->
-                ReminderCard(
-                    reminder = reminder,
-                    onTaken = { viewModel.markTaken(reminder.id) },
-                    onSnooze = { viewModel.snooze(reminder.id, 15) },
-                    onMissed = { viewModel.markMissed(reminder.id) }
-                )
+            if (displayReminders.isEmpty()) {
+                item {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 16.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(32.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.NotificationsNone,
+                                contentDescription = null,
+                                modifier = Modifier.size(48.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            Text(
+                                text = "No Scheduled Reminders Today",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                text = "Scan prescriptions or record consultation audio to automatically generate active daily dose reminders.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                        }
+                    }
+                }
+            } else {
+                items(displayReminders, key = { it.id }) { reminder ->
+                    ReminderCard(
+                        reminder = reminder,
+                        onTaken = { viewModel.markTaken(reminder.id) },
+                        onSnooze = { viewModel.snooze(reminder.id, 15) },
+                        onMissed = { viewModel.markMissed(reminder.id) }
+                    )
+                }
             }
         }
     }
@@ -103,7 +144,9 @@ data class ReminderItem(
     val medicineName: String,
     val time: String,
     val dose: String,
-    val status: ReminderStatus
+    val status: ReminderStatus,
+    val adherenceStreak: Int = 0,
+    val adherencePercent: Int = 100
 )
 
 enum class ReminderStatus { PENDING, TAKEN, MISSED }
@@ -179,12 +222,41 @@ private fun ReminderCard(
                     }
                 }
 
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text  = reminder.dose,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text  = reminder.dose,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    // Adherence badge
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.LocalFireDepartment,
+                                contentDescription = null,
+                                tint = Color(0xFFE65100),
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Spacer(Modifier.width(3.dp))
+                            Text(
+                                text = "${reminder.adherenceStreak}d streak · ${reminder.adherencePercent}%",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
+                    }
+                }
 
                 Spacer(Modifier.height(10.dp))
 

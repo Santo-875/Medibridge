@@ -65,6 +65,12 @@ class ScheduleRepository(
                     ScheduleEngine.generateSchedule(med.frequency, med.timing).slots
                 }
 
+                val takenCount = med.adherence.count { it.status.equals("taken", ignoreCase = true) }
+                val totalRecorded = med.adherence.count {
+                    it.status.equals("taken", ignoreCase = true) || it.status.equals("missed", ignoreCase = true)
+                }
+                val percent = if (totalRecorded > 0) (takenCount * 100) / totalRecorded else 100
+
                 for (slot in slots) {
                     val status = resolveOccurrenceStatus(med.adherence, today, slot.time)
                     val reminderId = ReminderManager.buildOccurrenceId(med.id, slot.time, today)
@@ -77,7 +83,9 @@ class ScheduleRepository(
                             medicineName = med.name,
                             time = displayTime,
                             dose = displayDose,
-                            status = status
+                            status = status,
+                            adherenceStreak = takenCount,
+                            adherencePercent = percent
                         )
                     )
                 }

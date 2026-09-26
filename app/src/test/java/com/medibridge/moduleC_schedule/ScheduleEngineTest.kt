@@ -207,6 +207,8 @@ private class DummyMedicationDao : com.medibridge.core.db.MedicationDao {
     override suspend fun upsertAll(medications: List<com.medibridge.core.db.MedicationEntity>) {}
     override suspend fun deleteMedication(medication: com.medibridge.core.db.MedicationEntity) {}
     override suspend fun deleteAll() {}
+    override suspend fun getAllMedicationsDirect() = emptyList<com.medibridge.core.db.MedicationEntity>()
+    override suspend fun updateAdherence(id: String, adherenceJson: String) {}
     override fun getMedicationsNeedingVerification() = kotlinx.coroutines.flow.flowOf(emptyList<com.medibridge.core.db.MedicationEntity>())
     override fun getMedicationsWithConflicts() = kotlinx.coroutines.flow.flowOf(emptyList<com.medibridge.core.db.MedicationEntity>())
 }

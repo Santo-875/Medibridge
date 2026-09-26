@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.medibridge.core.model.MedicationObject
+import com.medibridge.core.model.fromEntity
 import com.medibridge.moduleB_safety.data.SafetyCheckEntity
 import com.medibridge.moduleB_safety.data.SafetyRepository
 import com.medibridge.moduleB_safety.logic.*
@@ -16,11 +17,11 @@ import kotlinx.coroutines.launch
 data class SafetyUiState(
     val scenarios: List<SafetyDemoScenario> = MockSafetyRepository.demoScenarios,
     val selectedScenarioIndex: Int = 0,
-    val activeHistory: List<MedicationObject> = MockSafetyRepository.baselineHistory,
+    val activeHistory: List<MedicationObject> = emptyList(),
     val currentMedication: MedicationObject = MockSafetyRepository.demoScenarios[0].candidateMedication,
     val evaluationResult: SafetyEvaluationResult = SafetyEngine.evaluateSafety(
         MockSafetyRepository.demoScenarios[0].candidateMedication,
-        MockSafetyRepository.baselineHistory
+        emptyList()
     ),
     val aiResponse: AiSafetyResponse? = null,
     val isAiLoading: Boolean = false,
@@ -31,6 +32,8 @@ class SafetyViewModel(
     application: Application
 ) : AndroidViewModel(application) {
 
+    private val db = com.medibridge.core.db.AppDatabase.getInstance(application)
+    private val medicationDao = db.medicationDao()
     private val safetyRepository: SafetyRepository = SafetyRepository.getInstance(application)
     private val aiAnalyzer: AiSafetyAnalyzer = GeminiSafetyAnalyzer()
 
@@ -38,14 +41,28 @@ class SafetyViewModel(
     val uiState: StateFlow<SafetyUiState> = _uiState.asStateFlow()
 
     init {
-        // 1. Observe persistent history from local Room database
+        // 1. Observe persistent safety audit history from local Room database
         viewModelScope.launch {
             safetyRepository.getSafetyHistory().collect { historyList ->
                 _uiState.update { it.copy(savedSafetyHistory = historyList) }
             }
         }
 
-        // 2. Run initial scenario evaluation, generate AI explanation & persist
+        // 2. Observe real active medications from Room database
+        viewModelScope.launch {
+            medicationDao.getAllMedications().collect { entities ->
+                val realHistory = entities.map { it.fromEntity() }
+                _uiState.update { current ->
+                    val updatedEval = SafetyEngine.evaluateSafety(current.currentMedication, realHistory)
+                    current.copy(
+                        activeHistory = realHistory,
+                        evaluationResult = updatedEval
+                    )
+                }
+            }
+        }
+
+        // 3. Run initial scenario evaluation, generate AI explanation & persist
         evaluateAndPersistCurrent()
     }
 

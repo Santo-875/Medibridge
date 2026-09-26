@@ -100,6 +100,40 @@ fun ChatbotScreen(onBack: () -> Unit) {
                         )
                     }
                 },
+                actions = {
+                    var isSummarizing by remember { mutableStateOf(false) }
+                    TextButton(
+                        onClick = {
+                            if (!isSummarizing) {
+                                isSummarizing = true
+                                scope.launch {
+                                    val historyLines = messages.map { "${if (it.isBot) "Medi" else "Patient"}: ${it.text}" }
+                                    val summaryText = chatRepository.summarizeSession(historyLines)
+                                    messages.add(
+                                        ChatMessage(
+                                            id = UUID.randomUUID().toString(),
+                                            text = summaryText,
+                                            isBot = true
+                                        )
+                                    )
+                                    isSummarizing = false
+                                }
+                            }
+                        },
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onPrimary)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.AutoAwesome,
+                            contentDescription = "Summarize",
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = "Summarize",
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primary
                 )

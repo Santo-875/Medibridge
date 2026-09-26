@@ -5,8 +5,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.medibridge.BuildConfig
 import com.medibridge.core.db.AppDatabase
+import com.medibridge.core.db.RecordingEntity
 import com.medibridge.core.demo.DemoDataSeeder
 import com.medibridge.core.network.BackendClient
+import com.medibridge.moduleC_schedule.tts.ReminderLanguage
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -14,7 +17,7 @@ import kotlinx.coroutines.launch
 
 /**
  * SettingsViewModel — manages app-wide UI state, backend URL configuration,
- * and pitch demo data loading.
+ * TTS speech language, recordings, and pitch demo data loading.
  */
 class SettingsViewModel : ViewModel() {
 
@@ -22,9 +25,25 @@ class SettingsViewModel : ViewModel() {
     private val _isDarkMode = MutableStateFlow(false)
     val isDarkMode: StateFlow<Boolean> = _isDarkMode.asStateFlow()
 
+    // Reminder Voice TTS Language (English / Tamil)
+    private val _ttsLanguage = MutableStateFlow(ReminderLanguage.ENGLISH)
+    val ttsLanguage: StateFlow<ReminderLanguage> = _ttsLanguage.asStateFlow()
+
     // Backend Base URL (defaults to BuildConfig.BACKEND_BASE_URL)
     private val _backendBaseUrl = MutableStateFlow(BuildConfig.BACKEND_BASE_URL)
     val backendBaseUrl: StateFlow<String> = _backendBaseUrl.asStateFlow()
+
+    // Caretaker emergency escalation phone number
+    private val _caretakerPhone = MutableStateFlow("+1 555-0199")
+    val caretakerPhone: StateFlow<String> = _caretakerPhone.asStateFlow()
+
+    // Snooze / Reminder alert repeat interval in minutes
+    private val _snoozeIntervalMinutes = MutableStateFlow(15)
+    val snoozeIntervalMinutes: StateFlow<Int> = _snoozeIntervalMinutes.asStateFlow()
+
+    // Active demo scenario: 1=Diabetes, 2=Hypertension, 3=Caretaker, 4=No Scenario
+    private val _activeScenario = MutableStateFlow(1)
+    val activeScenario: StateFlow<Int> = _activeScenario.asStateFlow()
 
     private val _demoStatus = MutableStateFlow<String?>(null)
     val demoStatus: StateFlow<String?> = _demoStatus.asStateFlow()
@@ -37,6 +56,18 @@ class SettingsViewModel : ViewModel() {
         _isDarkMode.value = enabled
     }
 
+    fun setTtsLanguage(language: ReminderLanguage) {
+        _ttsLanguage.value = language
+    }
+
+    fun updateCaretakerPhone(phone: String) {
+        _caretakerPhone.value = phone.trim()
+    }
+
+    fun setSnoozeIntervalMinutes(minutes: Int) {
+        _snoozeIntervalMinutes.value = minutes
+    }
+
     fun updateBackendBaseUrl(newUrl: String) {
         val trimmed = newUrl.trim()
         if (trimmed.isNotEmpty()) {
@@ -45,47 +76,43 @@ class SettingsViewModel : ViewModel() {
         }
     }
 
+    fun observeRecordings(context: Context): Flow<List<RecordingEntity>> {
+        return AppDatabase.getInstance(context).recordingDao().getAllRecordings()
+    }
+
+    fun selectScenario(context: Context, index: Int) {
+        _activeScenario.value = index
+        viewModelScope.launch {
+            when (index) {
+                1 -> {
+                    _demoStatus.value = "Loading Scenario 1: Diabetes (Metformin)..."
+                    DemoDataSeeder.loadScenario(context, 1)
+                    _demoStatus.value = "Scenario 1: Diabetes loaded (Metformin 500mg)!"
+                }
+                2 -> {
+                    _demoStatus.value = "Loading Scenario 2: Hypertension (Dual Therapy Conflict)..."
+                    DemoDataSeeder.loadScenario(context, 2)
+                    _demoStatus.value = "Scenario 2: Hypertension loaded with interaction alert!"
+                }
+                3 -> {
+                    _demoStatus.value = "Loading Scenario 3: Elderly Caretaker (Calcium Missed Dose)..."
+                    DemoDataSeeder.loadScenario(context, 3)
+                    _demoStatus.value = "Scenario 3: Caretaker escalation armed!"
+                }
+                4 -> {
+                    _demoStatus.value = "Clearing DB for 'No Scenario' mode..."
+                    DemoDataSeeder.loadScenario(context, 4)
+                    _demoStatus.value = "No Scenario: Database is empty. Ready for live scanning & voice!"
+                }
+            }
+        }
+    }
+
     fun loadAllDemoScenarios(context: Context) {
         viewModelScope.launch {
             _demoStatus.value = "Loading all 3 demo scenarios..."
             DemoDataSeeder.seedAll(context)
             _demoStatus.value = "Loaded: Diabetes, Hypertension, and Elderly Caretaker!"
-        }
-    }
-
-    fun loadScenario1(context: Context) {
-        viewModelScope.launch {
-            _demoStatus.value = "Loading Scenario 1: Diabetes (Metformin)..."
-            val db = AppDatabase.getInstance(context)
-            DemoDataSeeder.seedScenario1_Diabetes(db.medicationDao())
-            _demoStatus.value = "Scenario 1 loaded: Metformin 500mg active!"
-        }
-    }
-
-    fun loadScenario2(context: Context) {
-        viewModelScope.launch {
-            _demoStatus.value = "Loading Scenario 2: Hypertension (Lisinopril + Amlodipine)..."
-            val db = AppDatabase.getInstance(context)
-            DemoDataSeeder.seedScenario2_Hypertension(db.medicationDao(), db.safetyCheckDao())
-            _demoStatus.value = "Scenario 2 loaded: Interaction flag in Safety Dashboard!"
-        }
-    }
-
-    fun loadScenario3(context: Context) {
-        viewModelScope.launch {
-            _demoStatus.value = "Loading Scenario 3: Elderly Caretaker (Calcium Missed Dose)..."
-            val db = AppDatabase.getInstance(context)
-            DemoDataSeeder.seedScenario3_ElderlyCaretaker(db.medicationDao())
-            _demoStatus.value = "Scenario 3 loaded: Caretaker Call Escalation armed!"
-        }
-    }
-
-    fun clearAllData(context: Context) {
-        viewModelScope.launch {
-            val db = AppDatabase.getInstance(context)
-            db.medicationDao().deleteAll()
-            db.safetyCheckDao().deleteAll()
-            _demoStatus.value = "Database cleared."
         }
     }
 }
