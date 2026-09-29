@@ -19,33 +19,50 @@ import java.util.concurrent.TimeUnit
  * local explanations from [FallbackSafetyAnalyzer] without crashing.
  */
 class GeminiSafetyAnalyzer(
-    private val apiKey: String = AiConfig.GEMINI_API_KEY,
+    private val customApiKey: String? = null,
     private val httpClient: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
         .readTimeout(8, TimeUnit.SECONDS)
         .build()
 ) : AiSafetyAnalyzer {
 
+    // Secondary constructor for backward compatibility
+    constructor(apiKey: String) : this(customApiKey = apiKey)
+
+    private val effectiveApiKey: String
+        get() = customApiKey?.takeIf { it.isNotBlank() } ?: AiConfig.GEMINI_API_KEY
+
     private val gson = Gson()
 
+    private fun logDebug(tag: String, msg: String) {
+        try { android.util.Log.d(tag, msg) } catch (_: Throwable) {}
+    }
+
+    private fun logError(tag: String, msg: String, tr: Throwable?) {
+        try { android.util.Log.e(tag, msg, tr) } catch (_: Throwable) {}
+    }
+
     override suspend fun analyzeSafety(input: AiSafetyComparisonInput): AiSafetyResponse {
+        val key = effectiveApiKey
         // If placeholder or missing, immediately return robust local fallback
-        if (apiKey.isBlank() || apiKey == "YOUR_GEMINI_API_KEY_HERE") {
+        if (key.isBlank() || key == "YOUR_GEMINI_API_KEY_HERE") {
+            logDebug("GeminiSafetyAnalyzer", "No valid Gemini API key configured, using local fallback")
             return FallbackSafetyAnalyzer.generatePoliteExplanation(input)
         }
 
         return withContext(Dispatchers.IO) {
             try {
-                callGeminiApi(input)
+                callGeminiApi(input, key)
             } catch (e: Exception) {
                 // Safe graceful degradation: NEVER crash on network or API failures
+                logError("GeminiSafetyAnalyzer", "Gemini API call failed, falling back to local explanation", e)
                 FallbackSafetyAnalyzer.generatePoliteExplanation(input)
             }
         }
     }
 
-    private fun callGeminiApi(input: AiSafetyComparisonInput): AiSafetyResponse {
-        val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/${AiConfig.MODEL_NAME}:generateContent?key=$apiKey"
+    private fun callGeminiApi(input: AiSafetyComparisonInput, key: String): AiSafetyResponse {
+        val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/${AiConfig.MODEL_NAME}:generateContent?key=$key"
 
         val promptText = buildString {
             appendLine("You are a clinical communication assistant in MediBridge AI.")

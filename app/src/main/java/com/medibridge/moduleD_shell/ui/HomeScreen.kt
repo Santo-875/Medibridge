@@ -43,6 +43,9 @@ import kotlinx.coroutines.launch
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.asRequestBody
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.io.File
 
 /**
@@ -239,6 +242,7 @@ fun HomeScreen(
                 modifier = Modifier.align(Alignment.TopEnd)
             ) {
                 NotificationPanel(
+                    db = db,
                     onDismiss = { showNotificationPanel = false },
                     onViewAll = { onReminderClick(); showNotificationPanel = false }
                 )
@@ -891,21 +895,24 @@ private fun ChatbotFab(onClick: () -> Unit) {
 // Notification Panel (dropdown from bell icon)
 // ─────────────────────────────────────────────────────────────────────────────
 
-private val dummyNotifications = listOf(
-    "💊 Metformin · Due in 30 min (8:00 AM)",
-    "⏰ Amlodipine · Take now (9:00 AM)",
-    "⚠️ Lisinopril · Verify dose before taking"
-)
-
 @Composable
 private fun NotificationPanel(
+    db: AppDatabase,
     onDismiss: () -> Unit,
     onViewAll: () -> Unit
 ) {
+    val notifications by db.notificationDao().getAllNotifications().collectAsState(initial = emptyList())
+    val scope = rememberCoroutineScope()
+
+    // Mark notifications as read when tray opens
+    LaunchedEffect(Unit) {
+        db.notificationDao().markAllRead()
+    }
+
     Card(
         modifier = Modifier
             .padding(top = 4.dp, end = 8.dp)
-            .width(300.dp)
+            .width(320.dp)
             .shadow(12.dp, RoundedCornerShape(16.dp)),
         shape  = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
@@ -918,11 +925,20 @@ private fun NotificationPanel(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text  = "Upcoming Reminders",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Filled.Notifications,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text  = "Alerts & Notifications",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
                 IconButton(onClick = onDismiss, modifier = Modifier.size(24.dp)) {
                     Icon(
                         imageVector = Icons.Filled.Close,
@@ -934,17 +950,78 @@ private fun NotificationPanel(
             Spacer(Modifier.height(8.dp))
             HorizontalDivider()
             Spacer(Modifier.height(8.dp))
-            dummyNotifications.forEach { note ->
+
+            if (notifications.isEmpty()) {
                 Text(
-                    text     = note,
+                    text     = "No alerts. You are on track with your medication schedule!",
                     style    = MaterialTheme.typography.bodySmall,
-                    color    = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.padding(vertical = 4.dp)
+                    color    = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 12.dp)
                 )
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 240.dp)
+                ) {
+                    items(notifications, key = { it.id }) { item ->
+                        val (icon, tint) = when (item.type) {
+                            "WRONG_TIME" -> Icons.Filled.Warning to Color(0xFFF57C00)
+                            "MISSED_DOSE" -> Icons.Filled.ErrorOutline to Color(0xFFD32F2F)
+                            "SAFETY_INTERACTION", "SAFETY_DUPLICATE" -> Icons.Filled.Dangerous to Color(0xFFC2185B)
+                            else -> Icons.Filled.Info to MaterialTheme.colorScheme.primary
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Icon(
+                                imageVector = icon,
+                                contentDescription = item.type,
+                                tint = tint,
+                                modifier = Modifier
+                                    .size(18.dp)
+                                    .padding(top = 2.dp)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = item.message,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = if (!item.isRead) FontWeight.Bold else FontWeight.Normal,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                val timeAgo = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(item.timestamp))
+                                Text(
+                                    text = timeAgo,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.outline
+                                )
+                            }
+                        }
+                    }
+                }
             }
+
             Spacer(Modifier.height(8.dp))
-            TextButton(onClick = onViewAll, modifier = Modifier.fillMaxWidth()) {
-                Text("View All Reminders →")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (notifications.isNotEmpty()) {
+                    TextButton(onClick = { scope.launch { db.notificationDao().deleteAll() } }) {
+                        Text("Clear All", style = MaterialTheme.typography.labelSmall)
+                    }
+                } else {
+                    Spacer(Modifier.width(1.dp))
+                }
+                TextButton(onClick = onViewAll) {
+                    Text("View Schedule →", style = MaterialTheme.typography.labelSmall)
+                }
             }
         }
     }

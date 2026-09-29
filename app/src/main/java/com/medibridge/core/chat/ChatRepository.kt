@@ -145,14 +145,20 @@ class ChatRepository(private val context: Context) {
 
                 val replyText = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
                 if (!replyText.isNullOrBlank()) {
+                    Log.i(TAG, "[CHAT_PATH: GEMINI_SUCCESS] Successfully generated clinical response via Gemini 1.5 Flash")
                     return@withContext replyText.trim()
+                } else {
+                    Log.w(TAG, "[CHAT_PATH: GEMINI_EMPTY] Gemini returned empty response text, falling back to local RAG")
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Gemini call failed or timed out: ${e.message}, falling back to local RAG")
+                Log.e(TAG, "[CHAT_PATH: GEMINI_FAILED] Gemini call failed: ${e.message}, falling back to local RAG", e)
             }
+        } else {
+            Log.i(TAG, "[CHAT_PATH: LOCAL_RAG_NO_KEY] No valid Gemini API key present, using local RAG engine")
         }
 
         // 4. Local RAG Fallback: Keyword & Entity matching over Room DB
+        Log.i(TAG, "[CHAT_PATH: LOCAL_RAG_FALLBACK] Serving answer via local clinical rule matching for: $trimmedQuery")
         val lowerQuery = trimmedQuery.lowercase()
         return@withContext buildLocalRagResponse(lowerQuery, medications, contextBlock)
     }

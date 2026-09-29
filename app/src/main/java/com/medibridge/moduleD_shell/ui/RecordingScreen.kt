@@ -245,24 +245,37 @@ fun RecordingScreen(
                     transcript = combinedTranscript,
                     summary = doctorNotes.ifBlank { combinedTranscript }
                 )
-                db.recordingDao().insertRecording(recEntity)
+                try {
+                    val rowId = db.recordingDao().insertRecording(recEntity)
+                    Log.i("RecordingScreen", "Successfully inserted RecordingEntity row $rowId: path=${recEntity.filePath}, transcriptLen=${recEntity.transcript.length}")
+                } catch (dbEx: Exception) {
+                    Log.e("RecordingScreen", "Failed to insert RecordingEntity into Room", dbEx)
+                }
 
                 // 2. Ingest candidate medications into MedicationEntity table via pipeline
                 if (candidateMeds.isNotEmpty()) {
-                    val evaluated = MedicationIngestionPipeline.evaluatePipeline(context, candidateMeds)
-                    MedicationIngestionPipeline.commitPipeline(context, evaluated)
-                    statusMessage = "Successfully processed & saved ${candidateMeds.size} medications!"
+                    try {
+                        val evaluated = MedicationIngestionPipeline.evaluatePipeline(context, candidateMeds)
+                        MedicationIngestionPipeline.commitPipeline(context, evaluated)
+                        statusMessage = "Successfully processed & saved ${candidateMeds.size} medications!"
+                    } catch (pipeEx: Exception) {
+                        Log.e("RecordingScreen", "MedicationIngestionPipeline failed", pipeEx)
+                        statusMessage = "Consultation recorded and saved to patient history."
+                    }
                 } else {
                     statusMessage = "Consultation recorded and saved to patient history."
                 }
+
+                Toast.makeText(context, "Consultation audio & notes saved", Toast.LENGTH_SHORT).show()
 
                 lastTamilTranscript = tamilText
                 lastEnglishTranscript = englishText
                 lastSummaryText = doctorNotes
                 extractedMeds = candidateMeds
             } catch (e: Exception) {
-                Log.e("RecordingScreen", "Processing error", e)
+                Log.e("RecordingScreen", "Processing error during audio ingestion", e)
                 statusMessage = "Saved to recordings."
+                Toast.makeText(context, "Saved to recordings (offline)", Toast.LENGTH_SHORT).show()
             } finally {
                 isProcessing = false
             }

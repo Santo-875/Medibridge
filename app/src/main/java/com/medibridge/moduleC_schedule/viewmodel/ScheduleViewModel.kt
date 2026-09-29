@@ -42,7 +42,8 @@ class ScheduleViewModel(
         application = application,
         repository = ScheduleRepository(
             medicationDao = AppDatabase.getInstance(application).medicationDao(),
-            reminderManager = ReminderManager(application)
+            reminderManager = ReminderManager(application),
+            notificationDao = AppDatabase.getInstance(application).notificationDao()
         ),
         patientSummaryService = PatientSummaryService(
             patientSummaryDao = AppDatabase.getInstance(application).patientSummaryDao()
@@ -78,8 +79,10 @@ class ScheduleViewModel(
                 if (existing.isEmpty()) {
                     com.medibridge.core.demo.DemoDataSeeder.seedPatientMrTanAhKow(db)
                 }
+                // Run automatic missed dose check on app start
+                repository.checkAndMarkMissedDoses()
             } catch (e: Exception) {
-                // Ignore initialization error
+                android.util.Log.e("ScheduleViewModel", "Failed to initialize schedule / seed data", e)
             }
         }
     }
@@ -93,7 +96,7 @@ class ScheduleViewModel(
                 val db = AppDatabase.getInstance(getApplication())
                 com.medibridge.core.demo.DemoDataSeeder.seedPatientMrTanAhKow(db)
             } catch (e: Exception) {
-                // Ignore seeding error
+                android.util.Log.e("ScheduleViewModel", "Failed to seed demo schedule", e)
             }
         }
     }
@@ -105,11 +108,15 @@ class ScheduleViewModel(
      */
     fun markTaken(reminderId: String, medicineName: String? = null, dose: String? = null) {
         viewModelScope.launch {
-            val parts = reminderId.split("_")
-            val medicationId = parts[0]
-            val slotTime = if (parts.size >= 2) parts[1] else "08:00"
-            val date = if (parts.size >= 3) parts.subList(2, parts.size).joinToString("_") else ScheduleRepository.todayIso()
-            repository.markTaken(medicationId, slotTime, date, medicineName, dose)
+            try {
+                val parts = reminderId.split("_")
+                val medicationId = parts[0]
+                val slotTime = if (parts.size >= 2) parts[1] else "08:00"
+                val date = if (parts.size >= 3) parts.subList(2, parts.size).joinToString("_") else ScheduleRepository.todayIso()
+                repository.markTaken(medicationId, slotTime, date, medicineName, dose)
+            } catch (e: Exception) {
+                android.util.Log.e("ScheduleViewModel", "Failed to mark taken for reminderId: $reminderId", e)
+            }
         }
     }
 
@@ -118,17 +125,21 @@ class ScheduleViewModel(
      */
     fun snooze(reminderId: String, delayMinutes: Int = 15) {
         viewModelScope.launch {
-            val parts = reminderId.split("_")
-            if (parts.size >= 3) {
-                val medicationId = parts[0]
-                val slotTime = parts[1]
-                val date = parts.subList(2, parts.size).joinToString("_")
-                repository.snooze(
-                    medicationId = medicationId,
-                    slotTime = slotTime,
-                    delayMinutes = delayMinutes,
-                    date = date
-                )
+            try {
+                val parts = reminderId.split("_")
+                if (parts.size >= 3) {
+                    val medicationId = parts[0]
+                    val slotTime = parts[1]
+                    val date = parts.subList(2, parts.size).joinToString("_")
+                    repository.snooze(
+                        medicationId = medicationId,
+                        slotTime = slotTime,
+                        delayMinutes = delayMinutes,
+                        date = date
+                    )
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("ScheduleViewModel", "Failed to snooze reminderId: $reminderId", e)
             }
         }
     }
@@ -139,11 +150,15 @@ class ScheduleViewModel(
      */
     fun markMissed(reminderId: String, medicineName: String? = null, dose: String? = null) {
         viewModelScope.launch {
-            val parts = reminderId.split("_")
-            val medicationId = parts[0]
-            val slotTime = if (parts.size >= 2) parts[1] else "08:00"
-            val date = if (parts.size >= 3) parts.subList(2, parts.size).joinToString("_") else ScheduleRepository.todayIso()
-            repository.markMissed(medicationId, slotTime, date, medicineName, dose)
+            try {
+                val parts = reminderId.split("_")
+                val medicationId = parts[0]
+                val slotTime = if (parts.size >= 2) parts[1] else "08:00"
+                val date = if (parts.size >= 3) parts.subList(2, parts.size).joinToString("_") else ScheduleRepository.todayIso()
+                repository.markMissed(medicationId, slotTime, date, medicineName, dose)
+            } catch (e: Exception) {
+                android.util.Log.e("ScheduleViewModel", "Failed to mark missed for reminderId: $reminderId", e)
+            }
         }
     }
 

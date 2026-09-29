@@ -1,10 +1,14 @@
 package com.medibridge.moduleB_safety.logic
 
+import com.medibridge.moduleC_schedule.ai.GeminiConfigProvider
+
 /**
  * Configuration holder for AI safety services.
- * Real keys are not committed. Uses placeholder.
+ * Delegates to GeminiConfigProvider so Module B uses the same unified API key as all other modules.
  */
 object AiConfig {
-    const val GEMINI_API_KEY: String = "YOUR_GEMINI_API_KEY_HERE"
+    val GEMINI_API_KEY: String
+        get() = GeminiConfigProvider.getApiKey() ?: ""
+
     const val MODEL_NAME: String = "gemini-1.5-flash"
 }

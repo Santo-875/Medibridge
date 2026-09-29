@@ -20,6 +20,7 @@ android {
 
         val envFile = rootProject.file(".env")
         var envBackendUrl = "http://10.0.2.2:8000/"
+        var envGeminiKey = ""
         if (envFile.exists()) {
             envFile.forEachLine { line ->
                 val trimmed = line.trim()
@@ -29,9 +30,16 @@ android {
                         envBackendUrl = if (url.endsWith("/")) url else "$url/"
                     }
                 }
+                if (trimmed.startsWith("GEMINI_API_KEY=") && !trimmed.startsWith("#")) {
+                    val key = trimmed.substringAfter("GEMINI_API_KEY=").trim().trim('"', '\'')
+                    if (key.isNotBlank() && key != "your_gemini_api_key_here") {
+                        envGeminiKey = key
+                    }
+                }
             }
         }
         buildConfigField("String", "BACKEND_BASE_URL", "\"$envBackendUrl\"")
+        buildConfigField("String", "GEMINI_API_KEY", "\"$envGeminiKey\"")
     }
 
     buildTypes {
@@ -56,6 +64,10 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
     }
 }
 
@@ -96,6 +108,9 @@ dependencies {
 
     // ViewModel + StateFlow
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+
+    // WorkManager — periodic missed-dose detection (Module C)
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
 
     // CameraX for Module A OCR/Bill Scanner
     implementation("androidx.camera:camera-core:1.3.4")

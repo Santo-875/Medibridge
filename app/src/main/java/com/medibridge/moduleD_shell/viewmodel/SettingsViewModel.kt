@@ -48,6 +48,34 @@ class SettingsViewModel : ViewModel() {
     private val _demoStatus = MutableStateFlow<String?>(null)
     val demoStatus: StateFlow<String?> = _demoStatus.asStateFlow()
 
+    // Gemini API Key management & AI status
+    private val _geminiApiKey = MutableStateFlow(com.medibridge.moduleC_schedule.ai.GeminiConfigProvider.getApiKey() ?: "")
+    val geminiApiKey: StateFlow<String> = _geminiApiKey.asStateFlow()
+
+    private val _aiStatus = MutableStateFlow(com.medibridge.moduleC_schedule.ai.GeminiConfigProvider.getStatusLabel())
+    val aiStatus: StateFlow<String> = _aiStatus.asStateFlow()
+
+    fun initGeminiKey(context: Context) {
+        val prefs = context.getSharedPreferences("medibridge_prefs", Context.MODE_PRIVATE)
+        val savedKey = prefs.getString("gemini_api_key", null)
+        if (!savedKey.isNullOrBlank()) {
+            com.medibridge.moduleC_schedule.ai.GeminiConfigProvider.setApiKey(savedKey)
+            _geminiApiKey.value = savedKey
+        } else {
+            _geminiApiKey.value = com.medibridge.moduleC_schedule.ai.GeminiConfigProvider.getApiKey() ?: ""
+        }
+        _aiStatus.value = com.medibridge.moduleC_schedule.ai.GeminiConfigProvider.getStatusLabel()
+    }
+
+    fun updateGeminiApiKey(key: String, context: Context) {
+        val trimmed = key.trim()
+        com.medibridge.moduleC_schedule.ai.GeminiConfigProvider.setApiKey(trimmed)
+        _geminiApiKey.value = trimmed
+        _aiStatus.value = com.medibridge.moduleC_schedule.ai.GeminiConfigProvider.getStatusLabel()
+        val prefs = context.getSharedPreferences("medibridge_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putString("gemini_api_key", trimmed).apply()
+    }
+
     fun toggleDarkMode() {
         _isDarkMode.value = !_isDarkMode.value
     }

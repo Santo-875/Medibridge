@@ -32,6 +32,16 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         com.medibridge.core.network.BackendClient.init(this)
 
+        // Initialize Gemini API key from persistent storage if overridden
+        val prefs = getSharedPreferences("medibridge_prefs", MODE_PRIVATE)
+        val savedGeminiKey = prefs.getString("gemini_api_key", null)
+        if (!savedGeminiKey.isNullOrBlank()) {
+            com.medibridge.moduleC_schedule.ai.GeminiConfigProvider.setApiKey(savedGeminiKey)
+        }
+
+        // Enqueue periodic missed-dose worker via WorkManager
+        com.medibridge.moduleC_schedule.work.MissedDoseWorker.enqueuePeriodicWork(this)
+
         val initialRoute = intent?.getStringExtra("EXTRA_NAV_ROUTE")
 
         setContent {

@@ -149,9 +149,11 @@ class ScheduleRepository(
         slotTime: String,
         date: String = todayIso(),
         medicineName: String? = null,
-        dose: String? = null
+        dose: String? = null,
+        takenTime: LocalTime = LocalTime.now()
     ) = withContext(Dispatchers.IO) {
         val entity = medicationDao.getMedicationById(medicationId)
+        val medName = entity?.name ?: medicineName ?: "Medication"
         if (entity != null) {
             val med = entity.fromEntity()
             val updatedAdherence = updateAdherenceList(
@@ -162,6 +164,9 @@ class ScheduleRepository(
             )
             val updatedMed = med.copy(adherence = updatedAdherence)
             medicationDao.upsertMedication(updatedMed.toEntity())
+
+            val slot = med.schedule.find { it.time == slotTime }
+            checkAndAlertWrongTime(med.name, slotTime, slot, takenTime)
         } else {
             // Create separately in DB if not found
             val newMed = MedicationObject(
@@ -186,6 +191,7 @@ class ScheduleRepository(
                 caretakerPhone = "+65 9123 4567"
             )
             medicationDao.upsertMedication(newMed.toEntity())
+            checkAndAlertWrongTime(medName, slotTime, null, takenTime)
         }
 
         reminderManager?.cancelReminder(medicationId, slotTime, date)
@@ -204,6 +210,7 @@ class ScheduleRepository(
         dose: String? = null
     ) = withContext(Dispatchers.IO) {
         val entity = medicationDao.getMedicationById(medicationId)
+        val medName = entity?.name ?: medicineName ?: "Medication"
         if (entity != null) {
             val med = entity.fromEntity()
             val updatedAdherence = updateAdherenceList(
@@ -256,8 +263,65 @@ class ScheduleRepository(
             )
         }
 
+        try {
+            notificationDao?.insertNotification(
+                NotificationEntity(
+                    type = "MISSED_DOSE",
+                    message = "Dose of $medName ($slotTime) marked as missed. Caretaker escalation notified.",
+                    medicationName = medName,
+                    timestamp = System.currentTimeMillis(),
+                    isRead = false
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to record missed dose alert", e)
+        }
+
         reminderManager?.cancelReminder(medicationId, slotTime, date)
         Log.i(TAG, "Marked MISSED: $medicationId at $slotTime on $date")
+    }
+
+    /**
+     * Checks if a dose intake time is outside the slot's valid window and generates an alert.
+     */
+    private suspend fun checkAndAlertWrongTime(
+        medName: String,
+        slotTime: String,
+        slot: ScheduleSlot?,
+        takenTime: LocalTime
+    ) {
+        try {
+            val isOutside: Boolean
+            val windowLabel: String
+            if (slot?.windowStart != null && slot.windowEnd != null) {
+                val start = LocalTime.parse(slot.windowStart)
+                val end = LocalTime.parse(slot.windowEnd)
+                isOutside = takenTime.isBefore(start) || takenTime.isAfter(end)
+                windowLabel = "${slot.windowStart} - ${slot.windowEnd}"
+            } else {
+                val targetTime = try { LocalTime.parse(slotTime) } catch (_: Exception) { LocalTime.of(8, 0) }
+                val start = targetTime.minusMinutes(45)
+                val end = targetTime.plusMinutes(45)
+                isOutside = takenTime.isBefore(start) || takenTime.isAfter(end)
+                windowLabel = "${start.format(TIME_FORMATTER_24)} - ${end.format(TIME_FORMATTER_24)}"
+            }
+
+            if (isOutside) {
+                val nowStr = takenTime.format(TIME_FORMATTER_12)
+                notificationDao?.insertNotification(
+                    NotificationEntity(
+                        type = "WRONG_TIME",
+                        message = "Dose of $medName taken at $nowStr (outside scheduled window $windowLabel).",
+                        medicationName = medName,
+                        timestamp = System.currentTimeMillis(),
+                        isRead = false
+                    )
+                )
+                Log.w(TAG, "WRONG_TIME alert recorded for $medName: taken at $nowStr, window $windowLabel")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking wrong time for $medName", e)
+        }
     }
 
     /**
@@ -307,7 +371,7 @@ class ScheduleRepository(
      *
      * Evaluates all active medications for [date].
      * If current time > slot time + [gracePeriodMinutes], and no "taken" record exists,
-     * automatically updates adherence to "missed".
+     * automatically updates adherence to "missed" and registers a notification.
      */
     suspend fun checkAndMarkMissedDoses(
         date: String = todayIso(),
@@ -315,10 +379,35 @@ class ScheduleRepository(
         now: LocalTime = LocalTime.now()
     ): Int = withContext(Dispatchers.IO) {
         var missedCount = 0
-        val entities = mutableListOf<MedicationObject>()
-        val allEntities = medicationDao.getMedicationById("") // or query via list
-        // Fetch all medications via flow first value or direct query
-        // Since getMedicationById("") returns single, we can get list through collect or flow
+        try {
+            val allEntities = medicationDao.getAllMedicationsDirect()
+            for (entity in allEntities) {
+                val med = entity.fromEntity()
+                val prevMissedCount = med.adherence.count { it.date == date && it.status.equals("missed", ignoreCase = true) }
+                val updatedMed = evaluateMissedDosesForMedication(med, date, gracePeriodMinutes, now)
+                val newMissedCount = updatedMed.adherence.count { it.date == date && it.status.equals("missed", ignoreCase = true) }
+                val delta = newMissedCount - prevMissedCount
+                if (delta > 0) {
+                    missedCount += delta
+                    try {
+                        notificationDao?.insertNotification(
+                            NotificationEntity(
+                                type = "MISSED_DOSE",
+                                message = "Missed scheduled dose for ${med.name}. Scheduled time was >$gracePeriodMinutes min ago.",
+                                medicationName = med.name,
+                                timestamp = System.currentTimeMillis(),
+                                isRead = false
+                            )
+                        )
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to record missed dose alert for ${med.name}", e)
+                    }
+                    Log.w(TAG, "Auto-detected $delta missed dose(s) for ${med.name} on $date")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking missed doses across all medications", e)
+        }
         return@withContext missedCount
     }
 

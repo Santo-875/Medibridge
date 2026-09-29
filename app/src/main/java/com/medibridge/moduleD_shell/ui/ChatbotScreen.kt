@@ -83,10 +83,14 @@ fun ChatbotScreen(onBack: () -> Unit) {
                                 fontWeight = FontWeight.Bold,
                                 color      = MaterialTheme.colorScheme.onPrimary
                             )
+                            val hasGemini = com.medibridge.moduleC_schedule.ai.GeminiConfigProvider.hasValidApiKey()
                             Text(
-                                text  = "AI Medication Assistant",
+                                text  = if (hasGemini) "AI: Connected (Gemini)" else "AI: Fallback Mode",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f)
+                                color = if (hasGemini)
+                                    androidx.compose.ui.graphics.Color(0xFFA5D6A7)
+                                else
+                                    androidx.compose.ui.graphics.Color(0xFFFFCC80)
                             )
                         }
                     }

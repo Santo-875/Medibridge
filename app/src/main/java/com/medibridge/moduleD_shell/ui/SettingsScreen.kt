@@ -43,8 +43,17 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
     val activeScenario by viewModel.activeScenario.collectAsState()
     val demoStatus by viewModel.demoStatus.collectAsState()
 
-    val recordingsList by viewModel.observeRecordings(context).collectAsState(initial = emptyList())
+    LaunchedEffect(Unit) {
+        viewModel.initGeminiKey(context)
+    }
+
+    val recordingsFlow = remember(context) { viewModel.observeRecordings(context) }
+    val recordingsList by recordingsFlow.collectAsState(initial = emptyList())
     var selectedRecordingForDialog by remember { mutableStateOf<RecordingEntity?>(null) }
+
+    val geminiKey by viewModel.geminiApiKey.collectAsState()
+    val aiStatus by viewModel.aiStatus.collectAsState()
+    var geminiKeyInput by remember(geminiKey) { mutableStateOf(geminiKey) }
 
     var urlInput by remember(currentUrl) { mutableStateOf(currentUrl) }
     var phoneInput by remember(caretakerPhone) { mutableStateOf(caretakerPhone) }
@@ -282,6 +291,73 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                             Text(text = label, style = MaterialTheme.typography.labelSmall)
                         }
                     }
+                }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+
+            // ── Gemini AI Engine & API Key ─────────────────────────────────────
+            SettingsSectionHeader(title = "Gemini AI Engine")
+
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                // AI Status Banner
+                val isConnected = aiStatus.contains("Connected")
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = if (isConnected) androidx.compose.ui.graphics.Color(0xFFE8F5E9) else androidx.compose.ui.graphics.Color(0xFFFFF3E0),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = if (isConnected) Icons.Filled.CheckCircle else Icons.Filled.Warning,
+                            contentDescription = null,
+                            tint = if (isConnected) androidx.compose.ui.graphics.Color(0xFF2E7D32) else androidx.compose.ui.graphics.Color(0xFFE65100),
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = aiStatus,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isConnected) androidx.compose.ui.graphics.Color(0xFF1B5E20) else androidx.compose.ui.graphics.Color(0xFFBF360C)
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "Powers clinical chat, medication safety analysis, patient summaries, and drug interaction alerts. Key is pre-loaded from .env at build time, but can be overridden below.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = geminiKeyInput,
+                    onValueChange = { geminiKeyInput = it },
+                    label = { Text("Gemini API Key") },
+                    placeholder = { Text("AIzaSy...") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(6.dp))
+
+                var isKeySaved by remember { mutableStateOf(false) }
+                Button(
+                    onClick = {
+                        viewModel.updateGeminiApiKey(geminiKeyInput, context)
+                        isKeySaved = true
+                        android.widget.Toast.makeText(context, "Gemini API key updated", android.widget.Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.align(Alignment.End),
+                    colors = if (isKeySaved) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary) else ButtonDefaults.buttonColors()
+                ) {
+                    Icon(if (isKeySaved) Icons.Filled.Check else Icons.Filled.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (isKeySaved) "Saved!" else "Save Key")
                 }
             }
 
