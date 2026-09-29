@@ -2,6 +2,8 @@ package com.medibridge.moduleC_schedule.repository
 
 import android.util.Log
 import com.medibridge.core.db.MedicationDao
+import com.medibridge.core.db.NotificationDao
+import com.medibridge.core.db.NotificationEntity
 import com.medibridge.core.model.AdherenceRecord
 import com.medibridge.core.model.MedicationObject
 import com.medibridge.core.model.ScheduleSlot
@@ -31,7 +33,8 @@ import java.time.format.DateTimeFormatter
  */
 class ScheduleRepository(
     private val medicationDao: MedicationDao,
-    private val reminderManager: ReminderManager? = null
+    private val reminderManager: ReminderManager? = null,
+    private val notificationDao: NotificationDao? = null
 ) {
 
     companion object {

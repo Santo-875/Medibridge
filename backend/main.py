@@ -1,11 +1,47 @@
 import os
+import sys
 import shutil
 import uuid
+import logging
 from pathlib import Path
 from typing import Optional, List, Literal
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from dotenv import load_dotenv
+
+# ── Load environment variables from .env at startup ───────────────────────────
+_env_path = Path(__file__).parent / ".env"
+if _env_path.exists():
+    load_dotenv(dotenv_path=_env_path)
+    logging.info(f"[MediBridge] Loaded environment from {_env_path}")
+else:
+    load_dotenv()  # Try default locations
+
+# ── Startup API Key Validation (fail loudly, never silently 500) ──────────────
+_REQUIRED_KEYS = {
+    "GEMINI_API_KEY": "Google Gemini (clinical summarization, chatbot)",
+    "SARVAM_API_KEY": "Sarvam AI (Tamil STT + translation)",
+    "GROQ_API_KEY":   "Groq (fast OCR LLM structuring)",
+}
+
+_missing_keys: list[str] = []
+for _key, _desc in _REQUIRED_KEYS.items():
+    _val = os.getenv(_key, "")
+    if not _val or _val.startswith("your_") or len(_val) < 10:
+        _missing_keys.append(_key)
+        logging.warning(f"[MediBridge] ⚠️  MISSING or placeholder API key: {_key} ({_desc})")
+    else:
+        logging.info(f"[MediBridge] ✅  {_key} loaded ({_desc})")
+
+if _missing_keys:
+    logging.warning(
+        f"[MediBridge] ⚠️  {len(_missing_keys)} API key(s) missing: {', '.join(_missing_keys)}. "
+        "Affected features will use fallback clinical data. "
+        "Set keys in backend/.env to enable live AI features."
+    )
+else:
+    logging.info("[MediBridge] ✅  All API keys configured — full AI pipeline active.")
 
 # Initialize main combined FastAPI app
 app = FastAPI(

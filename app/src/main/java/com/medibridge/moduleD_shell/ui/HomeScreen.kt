@@ -37,6 +37,7 @@ import com.medibridge.core.db.AppDatabase
 import com.medibridge.core.model.*
 import com.medibridge.core.network.BackendClient
 import com.medibridge.core.theme.*
+import com.medibridge.moduleC_schedule.viewmodel.ScheduleViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -77,6 +78,10 @@ fun HomeScreen(
     val medications = remember(roomMedEntities) {
         roomMedEntities.map { it.fromEntity() }
     }
+    // Live unread notification count — drives badge on bell icon
+    val unreadNotificationCount by db.notificationDao().getUnreadCount().collectAsState(initial = 0)
+    // ScheduleViewModel — used by MedicationCard Taken/Snooze buttons
+    val scheduleViewModel: ScheduleViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
 
     Scaffold(
         topBar = {
@@ -89,7 +94,8 @@ fun HomeScreen(
                 onRecordingToggle = onRecordClick,
                 onScannerClick = onScannerClick,
                 onNotificationClick = { showNotificationPanel = !showNotificationPanel },
-                onSafetyClick = onSafetyClick
+                onSafetyClick = onSafetyClick,
+                unreadCount = unreadNotificationCount
             )
         },
         floatingActionButton = {
@@ -210,7 +216,17 @@ fun HomeScreen(
                         medication = med,
                         modifier   = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 6.dp)
+                            .padding(horizontal = 16.dp, vertical = 6.dp),
+                        onTaken = {
+                            val slotTime = med.schedule.firstOrNull()?.time ?: "08:00"
+                            val reminderId = "${med.id}_${slotTime}_${java.time.LocalDate.now()}"
+                            scheduleViewModel.markTaken(reminderId, med.name, med.dose)
+                        },
+                        onSnooze = {
+                            val slotTime = med.schedule.firstOrNull()?.time ?: "08:00"
+                            val reminderId = "${med.id}_${slotTime}_${java.time.LocalDate.now()}"
+                            scheduleViewModel.snooze(reminderId, 15)
+                        }
                     )
                 }
             }
@@ -253,7 +269,8 @@ private fun HomeTopBar(
     onRecordingToggle: () -> Unit,
     onScannerClick: () -> Unit,
     onNotificationClick: () -> Unit,
-    onSafetyClick: () -> Unit
+    onSafetyClick: () -> Unit,
+    unreadCount: Int = 0
 ) {
     TopAppBar(
         title = {
@@ -337,12 +354,14 @@ private fun HomeTopBar(
                 )
             }
 
-            // Notification / bell icon — keeps existing alerts dropdown
+            // Notification / bell icon — badge driven by live unread count from NotificationDao
             IconButton(onClick = onNotificationClick) {
                 BadgedBox(
                     badge = {
-                        Badge {
-                            Text("3")  // TODO: wire real unread reminder count
+                        if (unreadCount > 0) {
+                            Badge {
+                                Text(if (unreadCount > 9) "9+" else unreadCount.toString())
+                            }
                         }
                     }
                 ) {
@@ -655,7 +674,9 @@ private fun StatChip(label: String) {
 @Composable
 fun MedicationCard(
     medication: MedicationObject,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onTaken: () -> Unit = {},
+    onSnooze: () -> Unit = {}
 ) {
     val status = when {
         medication.conflicts.isNotEmpty() -> MedStatus.CONFLICT
@@ -761,16 +782,13 @@ fun MedicationCard(
 
             Spacer(Modifier.height(12.dp))
 
-            // Schedule Action Buttons: Taken / Snooze
-            // TODO: Module C - missed state should be inferred automatically if time passes with no action
+            // Schedule Action Buttons: Taken / Snooze — wired to ScheduleViewModel via callbacks
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 FilledTonalButton(
-                    onClick = {
-                        // TODO: Module C - mark dose as taken in DB adherence log
-                    },
+                    onClick = onTaken,
                     colors = ButtonDefaults.filledTonalButtonColors(
                         containerColor = StatusVerifiedBg,
                         contentColor = StatusVerified
@@ -783,14 +801,12 @@ fun MedicationCard(
                 }
 
                 OutlinedButton(
-                    onClick = {
-                        // TODO: Module C/D - reschedule notification by snooze duration
-                    },
+                    onClick = onSnooze,
                     modifier = Modifier.weight(1f)
                 ) {
                     Icon(Icons.Filled.Snooze, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Snooze", style = MaterialTheme.typography.labelMedium)
+                    Text("Snooze 15m", style = MaterialTheme.typography.labelMedium)
                 }
             }
         }

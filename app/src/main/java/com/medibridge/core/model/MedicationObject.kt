@@ -43,7 +43,17 @@ data class ScheduleSlot(
     /** Named slot e.g. "Morning", "Afternoon", "Night" */
     val slot: String,
     /** Whether to take with food */
-    val withFood: Boolean
+    val withFood: Boolean,
+    /**
+     * Start of the valid intake window (24-hour "HH:mm").
+     * e.g. "06:00" for Morning. Null = use ±30min around [time].
+     */
+    val windowStart: String? = null,
+    /**
+     * End of the valid intake window (24-hour "HH:mm").
+     * e.g. "09:00" for Morning. Null = use ±30min around [time].
+     */
+    val windowEnd: String? = null
 )
 
 /**

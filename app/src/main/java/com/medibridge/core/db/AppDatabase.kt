@@ -15,6 +15,9 @@ import com.medibridge.moduleB_safety.data.SafetyCheckEntity
  *   v1 — Initial schema: medications table (hackathon shell)
  *   v3 — PatientSummaryEntity added (Module C)
  *   v4 — SafetyCheckEntity added (Module B migration)
+ *   v5 — RecordingEntity added (Module D voice recordings)
+ *   v6 — NotificationEntity added (alerts tray: wrong-time, missed-dose, safety flags)
+ *         RecordingEntity.status field added
  *
  * HOW TO MIGRATE:
  *   1. Bump [version] below.
@@ -29,9 +32,10 @@ import com.medibridge.moduleB_safety.data.SafetyCheckEntity
         MedicationEntity::class,
         PatientSummaryEntity::class,
         SafetyCheckEntity::class,
-        RecordingEntity::class
+        RecordingEntity::class,
+        NotificationEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false  // Set to true + provide schemaDirectory for production
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -40,6 +44,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun patientSummaryDao(): PatientSummaryDao
     abstract fun safetyCheckDao(): SafetyCheckDao
     abstract fun recordingDao(): RecordingDao
+    abstract fun notificationDao(): NotificationDao
 
     companion object {
         @Volatile
