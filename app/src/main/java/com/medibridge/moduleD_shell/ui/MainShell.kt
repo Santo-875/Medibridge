@@ -43,7 +43,7 @@ fun MainShell(
     val currentDest   = navBackStack?.destination
 
     // Screens where the bottom nav should be hidden (full-screen flows)
-    val hideBottomNavRoutes = setOf(Screen.Scanner.route, Screen.Chatbot.route)
+    val hideBottomNavRoutes = setOf(Screen.Scanner.route, Screen.Chatbot.route, Screen.AddEditMedication.route)
     val showBottomNav       = currentDest?.route !in hideBottomNavRoutes
 
     Scaffold(

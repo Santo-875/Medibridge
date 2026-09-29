@@ -5,6 +5,7 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import com.medibridge.moduleB_safety.ui.SafetyScreen
+import com.medibridge.moduleD_shell.ui.AddEditMedicationScreen
 import com.medibridge.moduleD_shell.ui.ChatbotScreen
 import com.medibridge.moduleD_shell.ui.HomeScreen
 import com.medibridge.moduleD_shell.ui.RemindersScreen
@@ -39,11 +40,11 @@ fun MediBridgeNavGraph(
         // ── Module D: Home ────────────────────────────────────────────────────
         composable(Screen.Home.route) {
             HomeScreen(
-                onScannerClick = { navController.navigate(Screen.Scanner.route) },
-                onChatbotClick = { navController.navigate(Screen.Chatbot.route) },
+                onScannerClick  = { navController.navigate(Screen.Scanner.route) },
+                onChatbotClick  = { navController.navigate(Screen.Chatbot.route) },
                 onReminderClick = { navController.navigate(Screen.Reminders.route) },
-                onSafetyClick = { navController.navigate(Screen.SafetyDashboard.route) },
-                onRecordClick = { navController.navigate(Screen.Recording.route) }
+                onSafetyClick   = { navController.navigate(Screen.SafetyDashboard.route) },
+                onRecordClick   = { navController.navigate(Screen.Recording.route) }
             )
         }
 
@@ -55,7 +56,7 @@ fun MediBridgeNavGraph(
                     navController.navigate(Screen.Reminders.route) {
                         popUpTo(navController.graph.startDestinationId) { saveState = true }
                         launchSingleTop = true
-                        restoreState = true
+                        restoreState    = true
                     }
                 }
             )
@@ -64,7 +65,8 @@ fun MediBridgeNavGraph(
         // ── Module D: Reminders ───────────────────────────────────────────────
         composable(Screen.Reminders.route) {
             RemindersScreen(
-                onBack = { navController.popBackStack() }
+                onBack          = { navController.popBackStack() },
+                onAddMedication = { navController.navigate(Screen.AddEditMedication.route) }
             )
         }
 
@@ -72,7 +74,6 @@ fun MediBridgeNavGraph(
         composable(Screen.Settings.route) {
             SettingsScreen(viewModel = settingsViewModel)
         }
-
 
         // ── Module A: Scanner Screen ──────────────────────────────────────────
         composable(Screen.Scanner.route) {
@@ -86,7 +87,6 @@ fun MediBridgeNavGraph(
         composable(Screen.Chatbot.route) {
             ChatbotScreen(
                 onBack = { navController.popBackStack() }
-                // TODO: Module D wires AI chat API (Retrofit) here
             )
         }
 
@@ -97,7 +97,11 @@ fun MediBridgeNavGraph(
             )
         }
 
-        // ── Future Module C screens — add composable() blocks here ────────────
-        // composable(Screen.ScheduleCalendar.route) { ScheduleCalendarScreen(...) }
+        // ── Module C: Add / Edit Medication ──────────────────────────────────
+        composable(Screen.AddEditMedication.route) {
+            AddEditMedicationScreen(
+                onBack = { navController.popBackStack() }
+            )
+        }
     }
 }

@@ -35,4 +35,25 @@ interface NotificationDao {
     /** Delete all notifications. */
     @Query("DELETE FROM notifications")
     suspend fun deleteAll()
+
+    /**
+     * Returns the most-recent unread alert for a specific medication name.
+     * Used by ReminderCard to show per-card WRONG_TIME / MISSED_DOSE badges.
+     */
+    @Query(
+        "SELECT * FROM notifications WHERE medicationName = :medName " +
+        "AND type IN ('WRONG_TIME', 'MISSED_DOSE') " +
+        "ORDER BY timestamp DESC LIMIT 1"
+    )
+    suspend fun getLatestAlertForMed(medName: String): NotificationEntity?
+
+    /**
+     * Observe all active (unread) alerts for a specific medication name as a Flow.
+     */
+    @Query(
+        "SELECT * FROM notifications WHERE medicationName = :medName " +
+        "AND type IN ('WRONG_TIME', 'MISSED_DOSE') AND isRead = 0 " +
+        "ORDER BY timestamp DESC"
+    )
+    fun observeActiveAlertsForMed(medName: String): Flow<List<NotificationEntity>>
 }

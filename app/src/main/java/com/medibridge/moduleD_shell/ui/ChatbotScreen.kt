@@ -164,9 +164,23 @@ fun ChatbotScreen(onBack: () -> Unit) {
                 }
             }
 
-            // ── Suggestion chips ─────────────────────────────────────────────
-            QuickSuggestions { suggestion ->
-                messageText = suggestion
+            // ── Quick-question chips ──────────────────────────────────────────
+            QuickSuggestions { question ->
+                // Pre-fill text field
+                messageText = question
+                // Immediately send through the RAG pipeline (same path as the Send FAB)
+                messages.add(ChatMessage(id = UUID.randomUUID().toString(), text = question, isBot = false))
+                messageText = ""
+                scope.launch {
+                    val reply = chatRepository.sendMessage(question)
+                    messages.add(
+                        ChatMessage(
+                            id    = UUID.randomUUID().toString(),
+                            text  = reply,
+                            isBot = true
+                        )
+                    )
+                }
             }
 
             HorizontalDivider()
@@ -297,27 +311,50 @@ private fun ChatBubble(message: ChatMessage) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Quick suggestion chips
+// Quick-question chips — grounded to patient DB via existing RAG pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 
-private val suggestions = listOf(
-    "My medications today",
-    "Any drug interactions?",
-    "Side effects of Metformin",
-    "When to take Amlodipine?"
+private val quickQuestions = listOf(
+    "What is the patient's name?",
+    "What was the last diagnosis?",
+    "When was the last checkup or consultation?",
+    "Who is the doctor?",
+    "What pharmacy is on file?",
+    "What medications are currently active?"
 )
 
+/**
+ * Tapping a chip immediately pre-fills the text field AND sends it through the
+ * same [ChatRepository.sendMessage] path — no separate answer path.
+ */
 @Composable
-private fun QuickSuggestions(onSelect: (String) -> Unit) {
-    androidx.compose.foundation.lazy.LazyRow(
-        contentPadding      = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        items(suggestions) { suggestion ->
-            SuggestionChip(
-                onClick = { onSelect(suggestion) },
-                label   = { Text(suggestion, style = MaterialTheme.typography.labelSmall) }
-            )
+private fun QuickSuggestions(
+    onSend: (String) -> Unit
+) {
+    Column {
+        Text(
+            text     = "Quick Questions",
+            style    = MaterialTheme.typography.labelSmall,
+            color    = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 12.dp, top = 6.dp, bottom = 2.dp)
+        )
+        androidx.compose.foundation.lazy.LazyRow(
+            contentPadding        = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(quickQuestions) { question ->
+                SuggestionChip(
+                    onClick = { onSend(question) },
+                    label   = { Text(question, style = MaterialTheme.typography.labelSmall) },
+                    icon    = {
+                        Icon(
+                            imageVector        = Icons.Filled.QuestionAnswer,
+                            contentDescription = null,
+                            modifier           = Modifier.size(14.dp)
+                        )
+                    }
+                )
+            }
         }
     }
 }
@@ -339,3 +376,4 @@ private fun dummyBotReply(userMessage: String): String {
             "I'm Medi, your AI medication assistant! I can help with your medication schedule, side effects, drug interactions, and dosage queries. What would you like to know?"
     }
 }
+

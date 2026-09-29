@@ -2,6 +2,7 @@ package com.medibridge.moduleD_shell.ui
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -15,9 +16,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.medibridge.core.db.AppDatabase
+import com.medibridge.core.db.NotificationEntity
 import com.medibridge.core.theme.*
 import com.medibridge.moduleC_schedule.viewmodel.ScheduleViewModel
 
@@ -29,11 +33,23 @@ import com.medibridge.moduleC_schedule.viewmodel.ScheduleViewModel
 @Composable
 fun RemindersScreen(
     onBack: () -> Unit,
+    onAddMedication: () -> Unit = {},
     viewModel: ScheduleViewModel = viewModel()
 ) {
+    val context = LocalContext.current
+    val db = remember { AppDatabase.getInstance(context) }
     val liveReminders by viewModel.reminders.collectAsState()
     // Fall back to dummy reminders if database has not yet been populated
     val displayReminders = if (liveReminders.isNotEmpty()) liveReminders else dummyReminders
+
+    // Reactive per-medication alert map: medName -> latest unread NotificationEntity
+    val allAlerts by db.notificationDao().getAllNotifications().collectAsState(initial = emptyList())
+    val alertsByMed: Map<String, NotificationEntity> = remember(allAlerts) {
+        allAlerts
+            .filter { it.type in listOf("WRONG_TIME", "MISSED_DOSE") && !it.isRead }
+            .groupBy { it.medicationName }
+            .mapValues { (_, list) -> list.maxByOrNull { it.timestamp }!! }
+    }
 
     val takenCount = displayReminders.count { it.status == ReminderStatus.TAKEN }
     val missedCount = displayReminders.count { it.status == ReminderStatus.MISSED }
@@ -73,6 +89,13 @@ fun RemindersScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = onAddMedication) {
+                        Icon(
+                            imageVector = Icons.Filled.Add,
+                            contentDescription = "Add Medication",
+                            tint = MaterialTheme.colorScheme.onPrimary
+                        )
+                    }
                     IconButton(onClick = { viewModel.seedDemoSchedule() }) {
                         Icon(
                             imageVector = Icons.Filled.Refresh,
@@ -85,6 +108,14 @@ fun RemindersScreen(
                     containerColor = MaterialTheme.colorScheme.primary
                 )
             )
+        },
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = onAddMedication,
+                containerColor = MaterialTheme.colorScheme.primary
+            ) {
+                Icon(Icons.Filled.Add, contentDescription = "Add Medication", tint = MaterialTheme.colorScheme.onPrimary)
+            }
         },
         containerColor = MaterialTheme.colorScheme.background
     ) { paddingValues ->
@@ -178,6 +209,7 @@ fun RemindersScreen(
                 items(displayReminders, key = { it.id }) { reminder ->
                     ReminderCard(
                         reminder = reminder,
+                        alertEntity = alertsByMed[reminder.medicineName],
                         onTaken = {
                             viewModel.markTaken(
                                 reminderId = reminder.id,
@@ -194,7 +226,8 @@ fun RemindersScreen(
                                 medicineName = reminder.medicineName,
                                 dose = reminder.dose
                             )
-                        }
+                        },
+                        onEditClick = onAddMedication
                     )
                 }
             }
@@ -450,7 +483,9 @@ data class ReminderItem(
     val status: ReminderStatus,
     val adherenceStreak: Int = 0,
     val adherencePercent: Int = 100,
-    val caretakerPhone: String? = null
+    val caretakerPhone: String? = null,
+    /** Transient flag set from NotificationEntity — drives the per-card alert badge. */
+    val lastAlertType: String? = null
 )
 
 enum class ReminderStatus { PENDING, TAKEN, MISSED }
@@ -470,10 +505,37 @@ val dummyReminders = listOf(
 @Composable
 private fun ReminderCard(
     reminder: ReminderItem,
+    alertEntity: com.medibridge.core.db.NotificationEntity? = null,
     onTaken: () -> Unit = {},
     onSnooze: () -> Unit = {},
-    onMissed: () -> Unit = {}
+    onMissed: () -> Unit = {},
+    onEditClick: () -> Unit = {}
 ) {
+    var showAlertDetail by remember { mutableStateOf(false) }
+
+    // Alert detail dialog
+    if (showAlertDetail && alertEntity != null) {
+        AlertDialog(
+            onDismissRequest = { showAlertDetail = false },
+            icon = {
+                Icon(
+                    imageVector = if (alertEntity.type == "WRONG_TIME") Icons.Filled.Schedule else Icons.Filled.Warning,
+                    contentDescription = null,
+                    tint = if (alertEntity.type == "WRONG_TIME") Color(0xFFE65100) else Color(0xFFC62828)
+                )
+            },
+            title = {
+                Text(
+                    text = if (alertEntity.type == "WRONG_TIME") "Wrong Time Alert" else "Missed Dose Alert",
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = { Text(alertEntity.message) },
+            confirmButton = {
+                TextButton(onClick = { showAlertDetail = false }) { Text("OK") }
+            }
+        )
+    }
     val isDark = isSystemInDarkTheme()
 
     // Container styling based on status
@@ -518,22 +580,63 @@ private fun ReminderCard(
                     .weight(1f)
                     .padding(14.dp)
             ) {
-                // Top Row: Medicine Name & Scheduled Time
+                // Top Row: Medicine Name, Scheduled Time, and Alert Badge
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = reminder.medicineName,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = when (reminder.status) {
-                            ReminderStatus.TAKEN  -> if (isDark) Color(0xFFA5D6A7) else Color(0xFF1B5E20)
-                            ReminderStatus.MISSED -> if (isDark) Color(0xFFEF9A9A) else Color(0xFFB71C1C)
-                            else                  -> MaterialTheme.colorScheme.onSurface
+                    // Medicine name + alert badge row
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(
+                            text = reminder.medicineName,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = when (reminder.status) {
+                                ReminderStatus.TAKEN  -> if (isDark) Color(0xFFA5D6A7) else Color(0xFF1B5E20)
+                                ReminderStatus.MISSED -> if (isDark) Color(0xFFEF9A9A) else Color(0xFFB71C1C)
+                                else                  -> MaterialTheme.colorScheme.onSurface
+                            }
+                        )
+
+                        // ── Alert Badge (WRONG_TIME or MISSED_DOSE) ──
+                        if (alertEntity != null) {
+                            Spacer(Modifier.width(6.dp))
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = if (alertEntity.type == "WRONG_TIME")
+                                    Color(0xFFE65100).copy(alpha = 0.15f)
+                                else
+                                    Color(0xFFC62828).copy(alpha = 0.15f),
+                                modifier = Modifier.clickable { showAlertDetail = true }
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = if (alertEntity.type == "WRONG_TIME")
+                                            Icons.Filled.Schedule
+                                        else
+                                            Icons.Filled.Warning,
+                                        contentDescription = alertEntity.type,
+                                        tint = if (alertEntity.type == "WRONG_TIME") Color(0xFFE65100) else Color(0xFFC62828),
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Spacer(Modifier.width(3.dp))
+                                    Text(
+                                        text = if (alertEntity.type == "WRONG_TIME") "Wrong Time" else "Missed",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (alertEntity.type == "WRONG_TIME") Color(0xFFE65100) else Color(0xFFC62828)
+                                    )
+                                }
+                            }
                         }
-                    )
+                    }
 
                     Surface(
                         shape = RoundedCornerShape(8.dp),

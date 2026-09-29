@@ -28,7 +28,11 @@ sealed class Screen(val route: String) {
     // ── Module B: Safety ─────────────────────────────────────────────────────
     object SafetyDashboard : Screen("safety_dashboard")
 
-    // ── Module C: Schedule (add schedule calendar etc.) ───────────────────────
+    // ── Module C: Schedule ─────────────────────────────────────────────────────
+    /** Add/Edit a medication. Optional param ?medId=<id> for edit mode. */
+    object AddEditMedication : Screen("add_edit_medication")
+
+    // ── Module D: Shell add-ons ────────────────────────────────────────────────
     // object ScheduleCalendar : Screen("schedule_calendar")
 }
 
