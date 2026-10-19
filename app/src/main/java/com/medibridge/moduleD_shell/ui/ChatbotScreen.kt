@@ -1,7 +1,12 @@
 package com.medibridge.moduleD_shell.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -14,43 +19,39 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.medibridge.core.chat.ChatRepository
+import com.medibridge.core.theme.*
 import kotlinx.coroutines.launch
 import java.util.UUID
 
-/**
- * ChatbotScreen — "Medi" AI assistant UI shell.
- *
- * EXTENSION POINTS FOR MODULE D (AI Chat):
- *   • Replace sendDummyReply() with a Retrofit call to the AI backend.
- *   • Wire [ChatViewModel] (to be created) to hold message history in StateFlow.
- *   • Deep-link medication cards from chat responses to medication detail screens.
- *
- * TODO: Module D wires AI chat API (Retrofit) here.
- * TODO: Module D/A — parse intents from user messages to trigger prescription scans.
- *
- * STUB / NOTE:
- * Medi reads from shared MedicationObject history — populated by Module 1 (voice sessions),
- * read by Module 2 (safety) and Module 3 (schedule/summary), always reflects latest state.
- * No new UI needed, just wire data source later.
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatbotScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val chatRepository = remember { ChatRepository(context) }
     var messageText by remember { mutableStateOf("") }
-    val messages    = remember { mutableStateListOf(
-        ChatMessage(id = "init", text = "Hi! I'm Medi, your personal clinical medication assistant.\n\nAsk me about your medicines, side effects, schedule, or drug interactions.", isBot = true)
-    ) }
-    val listState   = rememberLazyListState()
-    val scope       = rememberCoroutineScope()
+    var isBotTyping by remember { mutableStateOf(false) }
 
-    // Auto-scroll to bottom when new message arrives
-    LaunchedEffect(messages.size) {
+    val messages = remember {
+        mutableStateListOf(
+            ChatMessage(
+                id = "init",
+                text = "Hi! I'm Medi, your personal clinical medication assistant.\n\nAsk me about your medicines, dosage schedule, side effects, or drug interactions.",
+                isBot = true
+            )
+        )
+    }
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+
+    // Auto-scroll to bottom on new message
+    LaunchedEffect(messages.size, isBotTyping) {
         if (messages.isNotEmpty()) {
             listState.animateScrollToItem(messages.size - 1)
         }
@@ -63,34 +64,31 @@ fun ChatbotScreen(onBack: () -> Unit) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Surface(
                             shape = CircleShape,
-                            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.2f),
-                            modifier = Modifier.size(36.dp)
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier.size(38.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                                 Icon(
-                                    imageVector = Icons.Filled.SmartToy,
+                                    imageVector = Icons.Default.AutoAwesome,
                                     contentDescription = null,
-                                    tint     = MaterialTheme.colorScheme.onPrimary,
-                                    modifier = Modifier.size(22.dp)
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
                                 )
                             }
                         }
-                        Spacer(Modifier.width(10.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
                         Column {
                             Text(
-                                text       = "Medi",
-                                style      = MaterialTheme.typography.titleMedium,
+                                text = "Medi AI",
+                                style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
-                                color      = MaterialTheme.colorScheme.onPrimary
+                                color = MaterialTheme.colorScheme.onBackground
                             )
                             val hasGemini = com.medibridge.moduleC_schedule.ai.GeminiConfigProvider.hasValidApiKey()
                             Text(
-                                text  = if (hasGemini) "AI: Connected (Gemini)" else "AI: Fallback Mode",
+                                text = if (hasGemini) "Clinical AI Online" else "Standard Assistant",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = if (hasGemini)
-                                    androidx.compose.ui.graphics.Color(0xFFA5D6A7)
-                                else
-                                    androidx.compose.ui.graphics.Color(0xFFFFCC80)
+                                color = if (hasGemini) StatusVerified else StatusReview
                             )
                         }
                     }
@@ -98,15 +96,15 @@ fun ChatbotScreen(onBack: () -> Unit) {
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
-                            imageVector        = Icons.AutoMirrored.Filled.ArrowBack,
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back",
-                            tint               = MaterialTheme.colorScheme.onPrimary
+                            tint = MaterialTheme.colorScheme.onBackground
                         )
                     }
                 },
                 actions = {
                     var isSummarizing by remember { mutableStateOf(false) }
-                    TextButton(
+                    IconButton(
                         onClick = {
                             if (!isSummarizing) {
                                 isSummarizing = true
@@ -123,23 +121,17 @@ fun ChatbotScreen(onBack: () -> Unit) {
                                     isSummarizing = false
                                 }
                             }
-                        },
-                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onPrimary)
+                        }
                     ) {
                         Icon(
-                            imageVector = Icons.Filled.AutoAwesome,
-                            contentDescription = "Summarize",
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Text(
-                            text = "Summarize",
-                            fontWeight = FontWeight.SemiBold
+                            imageVector = Icons.Default.Summarize,
+                            contentDescription = "Summarize consultation",
+                            tint = MaterialTheme.colorScheme.primary
                         )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary
+                    containerColor = MaterialTheme.colorScheme.background
                 )
             )
         },
@@ -150,10 +142,38 @@ fun ChatbotScreen(onBack: () -> Unit) {
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            // ── Message list ─────────────────────────────────────────────────
+            // Medical disclaimer notice
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Medi provides general guidance and is not a substitute for a doctor.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp
+                    )
+                }
+            }
+
+            // Message list
             LazyColumn(
-                state          = listState,
-                modifier       = Modifier
+                state = listState,
+                modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
@@ -162,58 +182,98 @@ fun ChatbotScreen(onBack: () -> Unit) {
                 items(messages, key = { it.id }) { msg ->
                     ChatBubble(message = msg)
                 }
+
+                if (isBotTyping) {
+                    item {
+                        Row(verticalAlignment = Alignment.Bottom) {
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.AutoAwesome,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Surface(
+                                shape = RoundedCornerShape(4.dp, 16.dp, 16.dp, 16.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant
+                            ) {
+                                TypingIndicator()
+                            }
+                        }
+                    }
+                }
             }
 
-            // ── Quick-question chips ──────────────────────────────────────────
+            // Quick Questions suggestion chips
             QuickSuggestions { question ->
-                // Pre-fill text field
-                messageText = question
-                // Immediately send through the RAG pipeline (same path as the Send FAB)
-                messages.add(ChatMessage(id = UUID.randomUUID().toString(), text = question, isBot = false))
                 messageText = ""
+                messages.add(ChatMessage(id = UUID.randomUUID().toString(), text = question, isBot = false))
+                isBotTyping = true
                 scope.launch {
                     val reply = chatRepository.sendMessage(question)
+                    isBotTyping = false
                     messages.add(
                         ChatMessage(
-                            id    = UUID.randomUUID().toString(),
-                            text  = reply,
+                            id = UUID.randomUUID().toString(),
+                            text = reply,
                             isBot = true
                         )
                     )
                 }
             }
 
-            HorizontalDivider()
+            HorizontalDivider(
+                thickness = 0.5.dp,
+                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)
+            )
 
-            // ── Input bar ────────────────────────────────────────────────────
+            // Input Bar
             Row(
-                modifier          = Modifier
+                modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 OutlinedTextField(
-                    value          = messageText,
-                    onValueChange  = { messageText = it },
-                    placeholder    = { Text("Ask about your medications…") },
-                    modifier       = Modifier.weight(1f),
-                    shape          = RoundedCornerShape(24.dp),
-                    singleLine     = true,
-                    colors         = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor   = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                    value = messageText,
+                    onValueChange = { messageText = it },
+                    placeholder = {
+                        Text(
+                            text = "Ask about medicines, dosage, or interactions...",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(24.dp),
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f),
+                        focusedContainerColor = MaterialTheme.colorScheme.surface,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surface
                     )
                 )
-                Spacer(Modifier.width(8.dp))
+
+                Spacer(modifier = Modifier.width(8.dp))
+
                 FloatingActionButton(
                     onClick = {
                         val trimmed = messageText.trim()
                         if (trimmed.isNotEmpty()) {
                             messages.add(ChatMessage(id = UUID.randomUUID().toString(), text = trimmed, isBot = false))
                             messageText = ""
-
+                            isBotTyping = true
                             scope.launch {
                                 val reply = chatRepository.sendMessage(trimmed)
+                                isBotTyping = false
                                 messages.add(
                                     ChatMessage(
                                         id = UUID.randomUUID().toString(),
@@ -224,14 +284,15 @@ fun ChatbotScreen(onBack: () -> Unit) {
                             }
                         }
                     },
-                    modifier       = Modifier.size(52.dp),
-                    shape          = CircleShape,
-                    containerColor = MaterialTheme.colorScheme.primary
+                    modifier = Modifier.size(48.dp),
+                    shape = CircleShape,
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
                 ) {
                     Icon(
-                        imageVector        = Icons.AutoMirrored.Filled.Send,
-                        contentDescription = "Send",
-                        tint               = MaterialTheme.colorScheme.onPrimary
+                        imageVector = Icons.AutoMirrored.Filled.Send,
+                        contentDescription = "Send message",
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }
@@ -239,16 +300,12 @@ fun ChatbotScreen(onBack: () -> Unit) {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Chat bubble
-// ─────────────────────────────────────────────────────────────────────────────
-
 data class ChatMessage(val id: String, val text: String, val isBot: Boolean)
 
 @Composable
 private fun ChatBubble(message: ChatMessage) {
     val bubbleColor = if (message.isBot)
-        MaterialTheme.colorScheme.surfaceVariant
+        MaterialTheme.colorScheme.surface
     else
         MaterialTheme.colorScheme.primary
 
@@ -258,10 +315,10 @@ private fun ChatBubble(message: ChatMessage) {
         MaterialTheme.colorScheme.onPrimary
 
     val alignment = if (message.isBot) Alignment.Start else Alignment.End
-    val shape     = if (message.isBot)
-        RoundedCornerShape(4.dp, 18.dp, 18.dp, 18.dp)
+    val shape = if (message.isBot)
+        RoundedCornerShape(4.dp, 16.dp, 16.dp, 16.dp)
     else
-        RoundedCornerShape(18.dp, 4.dp, 18.dp, 18.dp)
+        RoundedCornerShape(16.dp, 4.dp, 16.dp, 16.dp)
 
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -271,24 +328,32 @@ private fun ChatBubble(message: ChatMessage) {
             Row(verticalAlignment = Alignment.Bottom) {
                 Surface(
                     shape = CircleShape,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.primaryContainer,
                     modifier = Modifier.size(28.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                         Icon(
-                            imageVector = Icons.Filled.SmartToy,
+                            imageVector = Icons.Default.AutoAwesome,
                             contentDescription = null,
-                            tint     = MaterialTheme.colorScheme.onPrimary,
-                            modifier = Modifier.size(16.dp)
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(15.dp)
                         )
                     }
                 }
-                Spacer(Modifier.width(6.dp))
-                Surface(shape = shape, color = bubbleColor) {
+                Spacer(modifier = Modifier.width(8.dp))
+                Surface(
+                    shape = shape,
+                    color = bubbleColor,
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)
+                    ),
+                    modifier = Modifier.widthIn(max = 290.dp)
+                ) {
                     Text(
-                        text     = message.text,
-                        style    = MaterialTheme.typography.bodyMedium,
-                        color    = textColor,
+                        text = message.text,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = textColor,
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
                     )
                 }
@@ -300,9 +365,9 @@ private fun ChatBubble(message: ChatMessage) {
                 modifier = Modifier.widthIn(max = 280.dp)
             ) {
                 Text(
-                    text     = message.text,
-                    style    = MaterialTheme.typography.bodyMedium,
-                    color    = textColor,
+                    text = message.text,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = textColor,
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
                 )
             }
@@ -310,70 +375,80 @@ private fun ChatBubble(message: ChatMessage) {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Quick-question chips — grounded to patient DB via existing RAG pipeline
-// ─────────────────────────────────────────────────────────────────────────────
-
-private val quickQuestions = listOf(
-    "What is the patient's name?",
-    "What was the last diagnosis?",
-    "When was the last checkup or consultation?",
-    "Who is the doctor?",
-    "What pharmacy is on file?",
-    "What medications are currently active?"
-)
-
-/**
- * Tapping a chip immediately pre-fills the text field AND sends it through the
- * same [ChatRepository.sendMessage] path — no separate answer path.
- */
 @Composable
-private fun QuickSuggestions(
-    onSend: (String) -> Unit
-) {
-    Column {
-        Text(
-            text     = "Quick Questions",
-            style    = MaterialTheme.typography.labelSmall,
-            color    = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 12.dp, top = 6.dp, bottom = 2.dp)
-        )
-        androidx.compose.foundation.lazy.LazyRow(
-            contentPadding        = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            items(quickQuestions) { question ->
-                SuggestionChip(
-                    onClick = { onSend(question) },
-                    label   = { Text(question, style = MaterialTheme.typography.labelSmall) },
-                    icon    = {
-                        Icon(
-                            imageVector        = Icons.Filled.QuestionAnswer,
-                            contentDescription = null,
-                            modifier           = Modifier.size(14.dp)
-                        )
-                    }
-                )
-            }
+private fun TypingIndicator(modifier: Modifier = Modifier) {
+    val transition = rememberInfiniteTransition(label = "typingAnim")
+    Row(
+        modifier = modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        repeat(3) { index ->
+            val scale by transition.animateFloat(
+                initialValue = 0.4f,
+                targetValue = 1f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(550, delayMillis = index * 160, easing = FastOutSlowInEasing),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "dot_$index"
+            )
+            Box(
+                modifier = Modifier
+                    .size(7.dp)
+                    .scale(scale)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary)
+            )
         }
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Dummy bot reply — replace with Retrofit AI call in Module D
-// ─────────────────────────────────────────────────────────────────────────────
-private fun dummyBotReply(userMessage: String): String {
-    // TODO: Module D — replace this function body with an API call:
-    //   return chatApiService.chat(ChatRequest(message = userMessage)).reply
-    return when {
-        userMessage.contains("metformin", ignoreCase = true) ->
-            "Metformin (500mg) should be taken twice daily with meals. Common side effects include nausea and diarrhea — these usually subside after a few weeks."
-        userMessage.contains("interaction", ignoreCase = true) ->
-            "Caution: I detected a potential interaction between Amlodipine and Lisinopril. Both lower blood pressure — combining them may cause dizziness. Please consult your doctor."
-        userMessage.contains("schedule", ignoreCase = true) || userMessage.contains("today", ignoreCase = true) ->
-            "Today's schedule:\n• 8:00 AM — Metformin 500mg (with breakfast)\n• 9:00 AM — Amlodipine 5mg + Vitamin D3\n• 10:00 PM — Lisinopril 10mg (before bed)"
-        else ->
-            "I'm Medi, your AI medication assistant! I can help with your medication schedule, side effects, drug interactions, and dosage queries. What would you like to know?"
+private val quickQuestions = listOf(
+    "What medications are currently active?",
+    "When should I take Metformin?",
+    "Are there any drug interactions?",
+    "What are common side effects?",
+    "Who is the doctor on file?"
+)
+
+@Composable
+private fun QuickSuggestions(
+    onSend: (String) -> Unit
+) {
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        items(quickQuestions) { question ->
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surface,
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                ),
+                onClick = { onSend(question) }
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ChatBubbleOutline,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(13.dp)
+                    )
+                    Text(
+                        text = question,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+        }
     }
 }
-

@@ -1,33 +1,16 @@
 package com.medibridge.moduleD_shell.navigation
 
+import androidx.compose.animation.*
+import androidx.compose.animation.AnimatedContentTransitionScope.SlideDirection
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import com.medibridge.moduleB_safety.ui.SafetyScreen
-import com.medibridge.moduleD_shell.ui.AddEditMedicationScreen
-import com.medibridge.moduleD_shell.ui.ChatbotScreen
-import com.medibridge.moduleD_shell.ui.HomeScreen
-import com.medibridge.moduleD_shell.ui.IntroVideoScreen
-import com.medibridge.moduleD_shell.ui.RemindersScreen
-import com.medibridge.moduleD_shell.ui.ScannerScreen
-import com.medibridge.moduleD_shell.ui.SettingsScreen
+import com.medibridge.moduleD_shell.ui.*
 import com.medibridge.moduleD_shell.viewmodel.SettingsViewModel
 
-/**
- * Central navigation graph for the MediBridge app.
- *
- * All module screens are registered here.
- * Start destination is [Screen.Intro] which plays motion graphics/video and auto-routes to [Screen.Home].
- *
- * TO ADD A NEW MODULE SCREEN:
- *   1. Add a route to [Screen].
- *   2. Import the composable from the module package.
- *   3. Add a composable() block below.
- *
- * @param navController  The single NavHostController managing back-stack.
- * @param settingsViewModel  Passed down for theme toggling — no need to hoist higher.
- */
 @Composable
 fun MediBridgeNavGraph(
     navController: NavHostController,
@@ -35,11 +18,14 @@ fun MediBridgeNavGraph(
     onOpenDrawer: () -> Unit = {}
 ) {
     NavHost(
-        navController    = navController,
-        startDestination = Screen.Intro.route
+        navController = navController,
+        startDestination = Screen.Intro.route,
+        enterTransition = { fadeIn(animationSpec = tween(220)) },
+        exitTransition = { fadeOut(animationSpec = tween(220)) },
+        popEnterTransition = { fadeIn(animationSpec = tween(220)) },
+        popExitTransition = { fadeOut(animationSpec = tween(220)) }
     ) {
-
-        // ── Module D: Intro Motion Graphics Video ─────────────────────────────
+        // Intro Screen
         composable(Screen.Intro.route) {
             IntroVideoScreen(
                 onIntroComplete = {
@@ -51,69 +37,109 @@ fun MediBridgeNavGraph(
             )
         }
 
-        // ── Module D: Home ────────────────────────────────────────────────────
+        // Top-Level Tab: Home
         composable(Screen.Home.route) {
             HomeScreen(
-                onScannerClick  = { navController.navigate(Screen.Scanner.route) },
-                onChatbotClick  = { navController.navigate(Screen.Chatbot.route) },
+                onScannerClick = { navController.navigate(Screen.Scanner.route) },
+                onChatbotClick = { navController.navigate(Screen.Chatbot.route) },
                 onReminderClick = { navController.navigate(Screen.Reminders.route) },
-                onSafetyClick   = { navController.navigate(Screen.SafetyDashboard.route) },
-                onRecordClick   = { navController.navigate(Screen.Recording.route) },
-                onOpenDrawer    = onOpenDrawer
+                onSafetyClick = { navController.navigate(Screen.SafetyDashboard.route) },
+                onRecordClick = { navController.navigate(Screen.Recording.route) },
+                onOpenDrawer = onOpenDrawer
             )
         }
 
-        // ── Module D: Recording Tab & Screen ──────────────────────────────────
-        composable(Screen.Recording.route) {
-            com.medibridge.moduleD_shell.ui.RecordingScreen(
-                onBack = { navController.popBackStack() },
-                onNavigateToReminders = {
-                    navController.navigate(Screen.Reminders.route) {
-                        popUpTo(navController.graph.startDestinationId) { saveState = true }
-                        launchSingleTop = true
-                        restoreState    = true
-                    }
-                }
+        // Top-Level Tab: Medicines
+        composable(Screen.Medicines.route) {
+            MedicinesScreen(
+                onMedicationClick = { medId ->
+                    navController.navigate(Screen.AddEditMedication.route)
+                },
+                onRemindersClick = { navController.navigate(Screen.Reminders.route) },
+                onAddClick = { navController.navigate(Screen.Scanner.route) }
             )
         }
 
-        // ── Module D: Reminders ───────────────────────────────────────────────
-        composable(Screen.Reminders.route) {
-            RemindersScreen(
-                onBack          = { navController.popBackStack() },
-                onAddMedication = { navController.navigate(Screen.AddEditMedication.route) }
-            )
-        }
-
-        // ── Module D: Settings ────────────────────────────────────────────────
-        composable(Screen.Settings.route) {
-            SettingsScreen(viewModel = settingsViewModel)
-        }
-
-        // ── Module A: Scanner Screen ──────────────────────────────────────────
-        composable(Screen.Scanner.route) {
-            ScannerScreen(
-                onBack = { navController.popBackStack() }
-                // TODO: Module A wires OCR camera + AI extraction here
-            )
-        }
-
-        // ── Module D: Chatbot (Medi) ──────────────────────────────────────────
+        // Top-Level Tab: Medi AI
         composable(Screen.Chatbot.route) {
             ChatbotScreen(
                 onBack = { navController.popBackStack() }
             )
         }
 
-        // ── Module B: Safety Dashboard ───────────────────────────────────────
-        composable(Screen.SafetyDashboard.route) {
+        // Top-Level Tab: Profile / Settings
+        composable(Screen.Profile.route) {
+            SettingsScreen(viewModel = settingsViewModel)
+        }
+
+        // Detail Slide Screen: Reminders
+        composable(
+            route = Screen.Reminders.route,
+            enterTransition = { slideIntoContainer(SlideDirection.Start, tween(280)) },
+            exitTransition = { slideOutOfContainer(SlideDirection.Start, tween(280)) },
+            popEnterTransition = { slideIntoContainer(SlideDirection.End, tween(280)) },
+            popExitTransition = { slideOutOfContainer(SlideDirection.End, tween(280)) }
+        ) {
+            RemindersScreen(
+                onBack = { navController.popBackStack() },
+                onAddMedication = { navController.navigate(Screen.AddEditMedication.route) }
+            )
+        }
+
+        // Detail Slide Screen: Scanner
+        composable(
+            route = Screen.Scanner.route,
+            enterTransition = { slideIntoContainer(SlideDirection.Start, tween(280)) },
+            exitTransition = { slideOutOfContainer(SlideDirection.Start, tween(280)) },
+            popEnterTransition = { slideIntoContainer(SlideDirection.End, tween(280)) },
+            popExitTransition = { slideOutOfContainer(SlideDirection.End, tween(280)) }
+        ) {
+            ScannerScreen(
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        // Detail Slide Screen: Recording
+        composable(
+            route = Screen.Recording.route,
+            enterTransition = { slideIntoContainer(SlideDirection.Start, tween(280)) },
+            exitTransition = { slideOutOfContainer(SlideDirection.Start, tween(280)) },
+            popEnterTransition = { slideIntoContainer(SlideDirection.End, tween(280)) },
+            popExitTransition = { slideOutOfContainer(SlideDirection.End, tween(280)) }
+        ) {
+            RecordingScreen(
+                onBack = { navController.popBackStack() },
+                onNavigateToReminders = {
+                    navController.navigate(Screen.Reminders.route) {
+                        popUpTo(Screen.Home.route) { saveState = true }
+                        launchSingleTop = true
+                        restoreState = true
+                    }
+                }
+            )
+        }
+
+        // Detail Slide Screen: Safety Dashboard
+        composable(
+            route = Screen.SafetyDashboard.route,
+            enterTransition = { slideIntoContainer(SlideDirection.Start, tween(280)) },
+            exitTransition = { slideOutOfContainer(SlideDirection.Start, tween(280)) },
+            popEnterTransition = { slideIntoContainer(SlideDirection.End, tween(280)) },
+            popExitTransition = { slideOutOfContainer(SlideDirection.End, tween(280)) }
+        ) {
             SafetyScreen(
                 onBack = { navController.popBackStack() }
             )
         }
 
-        // ── Module C: Add / Edit Medication ──────────────────────────────────
-        composable(Screen.AddEditMedication.route) {
+        // Detail Slide Screen: Add / Edit Medication
+        composable(
+            route = Screen.AddEditMedication.route,
+            enterTransition = { slideIntoContainer(SlideDirection.Start, tween(280)) },
+            exitTransition = { slideOutOfContainer(SlideDirection.Start, tween(280)) },
+            popEnterTransition = { slideIntoContainer(SlideDirection.End, tween(280)) },
+            popExitTransition = { slideOutOfContainer(SlideDirection.End, tween(280)) }
+        ) {
             AddEditMedicationScreen(
                 onBack = { navController.popBackStack() }
             )

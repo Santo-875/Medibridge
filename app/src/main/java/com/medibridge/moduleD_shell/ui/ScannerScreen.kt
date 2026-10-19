@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.Color as AndroidColor
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
@@ -19,6 +18,8 @@ import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -33,6 +34,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -41,10 +43,11 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.medibridge.core.model.MedicationObject
-import com.medibridge.core.model.ScheduleSlot
 import com.medibridge.core.network.BackendClient
 import com.medibridge.core.pipeline.MedicationIngestionPipeline
+import com.medibridge.core.theme.*
 import com.medibridge.moduleB_safety.logic.SafetyVerdict
+import com.medibridge.moduleD_shell.ui.components.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -87,7 +90,6 @@ fun ScannerScreen(onBack: () -> Unit) {
 
     var imageCapture: ImageCapture? by remember { mutableStateOf(null) }
 
-    // File picker launcher supporting both Images and PDF pharmacy bills
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -128,9 +130,9 @@ fun ScannerScreen(onBack: () -> Unit) {
             TopAppBar(
                 title = {
                     Text(
-                        text = if (uiState is ScannerUiState.Review) "Review Prescription / Bill" else "Scan Prescription or Bill",
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimary
+                        text = if (uiState is ScannerUiState.Review) "Review Prescription" else "Scan Prescription",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
                     )
                 },
                 navigationIcon = {
@@ -143,96 +145,117 @@ fun ScannerScreen(onBack: () -> Unit) {
                     }) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = MaterialTheme.colorScheme.onPrimary
+                            contentDescription = "Back"
                         )
                     }
                 },
+                actions = {
+                    if (uiState is ScannerUiState.Camera) {
+                        IconButton(onClick = { filePickerLauncher.launch(arrayOf("image/*", "application/pdf")) }) {
+                            Icon(
+                                imageVector = Icons.Default.UploadFile,
+                                contentDescription = "Upload Image or PDF"
+                            )
+                        }
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary
+                    containerColor = MaterialTheme.colorScheme.background,
+                    titleContentColor = MaterialTheme.colorScheme.onBackground
                 )
             )
         },
         containerColor = MaterialTheme.colorScheme.background
-    ) { paddingValues ->
+    ) { innerPadding ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(paddingValues)
+                .padding(innerPadding)
         ) {
             when (val state = uiState) {
                 is ScannerUiState.Camera -> {
                     if (hasCameraPermission) {
                         Box(modifier = Modifier.fillMaxSize()) {
-                            // CameraX Viewfinder
                             AndroidView(
+                                modifier = Modifier.fillMaxSize(),
                                 factory = { ctx ->
                                     val previewView = PreviewView(ctx)
                                     val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
+
                                     cameraProviderFuture.addListener({
                                         val cameraProvider = cameraProviderFuture.get()
                                         val preview = Preview.Builder().build().also {
                                             it.setSurfaceProvider(previewView.surfaceProvider)
                                         }
-                                        val capture = ImageCapture.Builder().build()
+
+                                        val capture = ImageCapture.Builder()
+                                            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                                            .build()
                                         imageCapture = capture
+
+                                        val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+
                                         try {
                                             cameraProvider.unbindAll()
                                             cameraProvider.bindToLifecycle(
                                                 lifecycleOwner,
-                                                CameraSelector.DEFAULT_BACK_CAMERA,
+                                                cameraSelector,
                                                 preview,
                                                 capture
                                             )
-                                        } catch (e: Exception) {
-                                            Log.e("ScannerScreen", "Camera bind failed", e)
+                                        } catch (exc: Exception) {
+                                            Log.e("ScannerScreen", "Camera binding failed", exc)
                                         }
                                     }, ContextCompat.getMainExecutor(ctx))
+
                                     previewView
-                                },
+                                }
+                            )
+
+                            // Viewfinder Overlay with Corner Guides
+                            ViewfinderOverlay(
                                 modifier = Modifier.fillMaxSize()
                             )
 
-                            // Viewfinder framing guides
-                            Box(
-                                modifier = Modifier
-                                    .align(Alignment.Center)
-                                    .size(width = 300.dp, height = 380.dp)
-                                    .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(16.dp))
-                            )
-
-                            // Bottom Controls (Upload file / PDF + Capture Photo + Demo Extraction)
-                            Row(
+                            // Bottom Capture Bar
+                            Surface(
                                 modifier = Modifier
                                     .align(Alignment.BottomCenter)
                                     .fillMaxWidth()
-                                    .background(Color.Black.copy(alpha = 0.5f))
-                                    .padding(vertical = 20.dp, horizontal = 24.dp),
-                                horizontalArrangement = Arrangement.SpaceEvenly,
-                                verticalAlignment = Alignment.CenterVertically
+                                    .padding(bottom = 32.dp, start = 24.dp, end = 24.dp),
+                                color = Color.Transparent
                             ) {
-                                // Upload file button (Image or PDF)
-                                IconButton(
-                                    onClick = { filePickerLauncher.launch(arrayOf("image/*", "application/pdf")) },
-                                    modifier = Modifier
-                                        .size(50.dp)
-                                        .background(Color.White.copy(alpha = 0.2f), CircleShape)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceEvenly,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Filled.FileUpload,
-                                        contentDescription = "Upload Image or PDF",
-                                        tint = Color.White
-                                    )
-                                }
+                                    // Upload File Button
+                                    IconButton(
+                                        onClick = { filePickerLauncher.launch(arrayOf("image/*", "application/pdf")) },
+                                        modifier = Modifier
+                                            .size(50.dp)
+                                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f), CircleShape)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.PhotoLibrary,
+                                            contentDescription = "Select from gallery",
+                                            tint = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
 
-                                // Capture Button
-                                FloatingActionButton(
-                                    onClick = {
-                                        val capture = imageCapture
-                                        if (capture != null) {
+                                    // Primary Shutter Button
+                                    Surface(
+                                        modifier = Modifier.size(72.dp),
+                                        shape = CircleShape,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        shadowElevation = 6.dp,
+                                        onClick = {
+                                            val capture = imageCapture ?: return@Surface
                                             val photoFile = File(context.cacheDir, "scan_${System.currentTimeMillis()}.jpg")
                                             val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
-                                            uiState = ScannerUiState.Analyzing("Capturing document photo...")
+
+                                            uiState = ScannerUiState.Analyzing("Capturing prescription...")
 
                                             capture.takePicture(
                                                 outputOptions,
@@ -241,11 +264,11 @@ fun ScannerScreen(onBack: () -> Unit) {
                                                     override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                                                         scope.launch {
                                                             try {
-                                                                uiState = ScannerUiState.Analyzing("Extracting prescription items with OCR & AI...")
+                                                                uiState = ScannerUiState.Analyzing("Extracting medicine details with OCR...")
                                                                 val pipelineResults = processDocumentAndPipeline(context, photoFile)
                                                                 uiState = ScannerUiState.Review(pipelineResults)
                                                             } catch (e: Exception) {
-                                                                uiState = ScannerUiState.Error(e.message ?: "Failed to process captured photo.")
+                                                                uiState = ScannerUiState.Error(e.message ?: "Analysis failed.")
                                                             }
                                                         }
                                                     }
@@ -257,56 +280,45 @@ fun ScannerScreen(onBack: () -> Unit) {
                                                 }
                                             )
                                         }
-                                    },
-                                    containerColor = MaterialTheme.colorScheme.primary,
-                                    shape = CircleShape,
-                                    modifier = Modifier.size(68.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Filled.Camera,
-                                        contentDescription = "Capture",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(36.dp)
-                                    )
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = Icons.Default.Camera,
+                                                contentDescription = "Capture prescription",
+                                                tint = MaterialTheme.colorScheme.onPrimary,
+                                                modifier = Modifier.size(34.dp)
+                                            )
+                                        }
+                                    }
+
+                                    // Torch/Flash placeholder
+                                    IconButton(
+                                        onClick = {
+                                            Toast.makeText(context, "Hold steady in good light", Toast.LENGTH_SHORT).show()
+                                        },
+                                        modifier = Modifier
+                                            .size(50.dp)
+                                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f), CircleShape)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.FlashlightOn,
+                                            contentDescription = "Torch info",
+                                            tint = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
                                 }
                             }
                         }
                     } else {
-                        // Permission request fallback
-                        Column(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(32.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.CameraAlt,
-                                contentDescription = null,
-                                modifier = Modifier.size(64.dp),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                            Spacer(Modifier.height(16.dp))
-                            Text(
-                                text = "Camera Permission Required",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Spacer(Modifier.height(8.dp))
-                            Text(
-                                text = "MediBridge needs camera access to capture physical prescriptions and pharmacy bills.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(Modifier.height(24.dp))
-                            Button(onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) }) {
-                                Text("Grant Permission")
-                            }
-                            Spacer(Modifier.height(12.dp))
-                            OutlinedButton(onClick = { filePickerLauncher.launch(arrayOf("image/*", "application/pdf")) }) {
-                                Text("Or Select Image / PDF File")
-                            }
-                        }
+                        // Permission Rationale Screen
+                        EmptyState(
+                            icon = Icons.Default.CameraAlt,
+                            title = "Camera Permission Needed",
+                            subtitle = "MediBridge uses the camera to scan physical prescriptions and pill bottle labels with OCR AI.",
+                            actionLabel = "Grant Camera Access",
+                            onActionClick = { permissionLauncher.launch(Manifest.permission.CAMERA) },
+                            modifier = Modifier.align(Alignment.Center)
+                        )
                     }
                 }
 
@@ -318,16 +330,21 @@ fun ScannerScreen(onBack: () -> Unit) {
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
-                        CircularProgressIndicator(modifier = Modifier.size(54.dp))
-                        Spacer(Modifier.height(20.dp))
+                        CircularProgressIndicator(
+                            color = MaterialTheme.colorScheme.primary,
+                            strokeWidth = 3.dp,
+                            modifier = Modifier.size(52.dp)
+                        )
+                        Spacer(modifier = Modifier.height(24.dp))
                         Text(
                             text = state.status,
                             style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onBackground
                         )
-                        Spacer(Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "Extracting medicines, verifying RxNorm, and evaluating safety interactions...",
+                            text = "Extracting medicines, verifying doses, and checking safety interactions...",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -335,55 +352,28 @@ fun ScannerScreen(onBack: () -> Unit) {
                 }
 
                 is ScannerUiState.Review -> {
-                    UnifiedReviewContent(
+                    ReviewScreenContent(
                         items = state.items,
                         onSave = { finalizedItems ->
                             scope.launch {
                                 MedicationIngestionPipeline.commitPipeline(context, finalizedItems)
-                                Toast.makeText(context, "${finalizedItems.size} medication(s) saved to schedule!", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "${finalizedItems.size} medicine(s) saved to regimen!", Toast.LENGTH_SHORT).show()
                                 onBack()
                             }
-                        }
+                        },
+                        onRetake = { uiState = ScannerUiState.Camera }
                     )
                 }
 
                 is ScannerUiState.Error -> {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.ErrorOutline,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(56.dp)
-                        )
-                        Spacer(Modifier.height(16.dp))
-                        Text(
-                            text = "Prescription Processing Failed",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            text = state.message,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                        )
-                        Spacer(Modifier.height(24.dp))
-                        Button(
-                            onClick = { uiState = ScannerUiState.Camera }
-                        ) {
-                            Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Try Again")
-                        }
-                    }
+                    EmptyState(
+                        icon = Icons.Default.ErrorOutline,
+                        title = "Prescription Processing Failed",
+                        subtitle = state.message,
+                        actionLabel = "Try Again",
+                        onActionClick = { uiState = ScannerUiState.Camera },
+                        modifier = Modifier.align(Alignment.Center)
+                    )
                 }
             }
         }
@@ -391,44 +381,104 @@ fun ScannerScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun UnifiedReviewContent(
+private fun ViewfinderOverlay(modifier: Modifier = Modifier) {
+    val infiniteTransition = rememberInfiniteTransition(label = "laser")
+    val laserY by infiniteTransition.animateFloat(
+        initialValue = 0.1f,
+        targetValue = 0.9f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1800, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "laserY"
+    )
+
+    Box(
+        modifier = modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp)
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+                modifier = Modifier.padding(bottom = 16.dp)
+            ) {
+                Text(
+                    text = "Align prescription or label inside frame",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(0.78f)
+                    .clip(RoundedCornerShape(20.dp))
+                    .border(
+                        BorderStroke(2.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)),
+                        RoundedCornerShape(20.dp)
+                    )
+            ) {
+                // Animated scanning laser line
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .fillMaxHeight(0.005f)
+                        .align(Alignment.TopCenter)
+                        .offset(y = (laserY * 340).dp)
+                        .background(MaterialTheme.colorScheme.primary)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReviewScreenContent(
     items: List<MedicationIngestionPipeline.PipelineResultItem>,
-    onSave: (List<MedicationIngestionPipeline.PipelineResultItem>) -> Unit
+    onSave: (List<MedicationIngestionPipeline.PipelineResultItem>) -> Unit,
+    onRetake: () -> Unit
 ) {
-    var reviewItems by remember { mutableStateOf(items) }
+    var reviewItems by remember(items) { mutableStateOf(items) }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp)
+            .padding(horizontal = 16.dp)
     ) {
-        Text(
-            text = "Extracted Medications (${reviewItems.size})",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold
+        SectionHeader(
+            title = "Extracted Medications",
+            badgeCount = reviewItems.size,
+            actionLabel = "Retake",
+            onActionClick = onRetake
         )
-        Text(
-            text = "Review extracted details and safety check verdicts before adding to schedule.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-
-        Spacer(Modifier.height(12.dp))
 
         LazyColumn(
             modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            contentPadding = PaddingValues(vertical = 8.dp)
         ) {
             itemsIndexed(reviewItems) { index, item ->
                 val med = item.medication
                 val eval = item.evaluation
 
-                Card(
+                Surface(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
                 ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp)
+                    ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -436,133 +486,152 @@ private fun UnifiedReviewContent(
                         ) {
                             Text(
                                 text = "Item #${index + 1}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.Bold
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
                             )
 
-                            // Verdict badge
-                            val verdictBadgeColor = when (eval.verdict) {
-                                SafetyVerdict.SAFE -> Color(0xFFD1F2D9)
-                                SafetyVerdict.INTERACTION, SafetyVerdict.DUPLICATE -> Color(0xFFFFD2D2)
-                                SafetyVerdict.OVERLAP, SafetyVerdict.UNVERIFIED -> Color(0xFFFFECC8)
-                            }
-                            val verdictTextColor = when (eval.verdict) {
-                                SafetyVerdict.SAFE -> Color(0xFF137333)
-                                SafetyVerdict.INTERACTION, SafetyVerdict.DUPLICATE -> Color(0xFFB3261E)
-                                SafetyVerdict.OVERLAP, SafetyVerdict.UNVERIFIED -> Color(0xFFB06000)
-                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                ConfidenceBadge(confidence = med.confidence)
 
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = verdictBadgeColor
-                            ) {
-                                Text(
-                                    text = eval.verdict.name,
-                                    color = verdictTextColor,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                                )
+                                val status = when (eval.verdict) {
+                                    SafetyVerdict.SAFE -> StatusType.Verified
+                                    SafetyVerdict.INTERACTION, SafetyVerdict.DUPLICATE -> StatusType.Conflict
+                                    SafetyVerdict.OVERLAP, SafetyVerdict.UNVERIFIED -> StatusType.Review
+                                    else -> StatusType.Review
+                                }
+                                StatusChip(status = status, customLabel = eval.verdict.name)
                             }
                         }
 
-                        // Conflict alert if any
-                        if (eval.conflicts.isNotEmpty() || !eval.crossVerified) {
-                            Spacer(Modifier.height(6.dp))
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text(
-                                    text = "Alert: ${eval.headline} - ${eval.summary}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onErrorContainer,
-                                    modifier = Modifier.padding(8.dp)
-                                )
-                            }
-                        }
-
-                        Spacer(Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
 
                         OutlinedTextField(
                             value = med.name,
                             onValueChange = { newName ->
                                 reviewItems = reviewItems.toMutableList().also {
-                                    val updatedMed = med.copy(name = newName)
-                                    it[index] = it[index].copy(medication = updatedMed)
+                                    val updated = med.copy(name = newName)
+                                    it[index] = it[index].copy(medication = updated)
                                 }
                             },
                             label = { Text("Medicine Name") },
                             modifier = Modifier.fillMaxWidth(),
-                            singleLine = true
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp)
                         )
 
-                        Spacer(Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = med.strength,
+                                onValueChange = { newStrength ->
+                                    reviewItems = reviewItems.toMutableList().also {
+                                        val updated = med.copy(strength = newStrength)
+                                        it[index] = it[index].copy(medication = updated)
+                                    }
+                                },
+                                label = { Text("Strength") },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                                shape = RoundedCornerShape(12.dp)
+                            )
+
                             OutlinedTextField(
                                 value = med.dose,
                                 onValueChange = { newDose ->
                                     reviewItems = reviewItems.toMutableList().also {
-                                        val updatedMed = med.copy(dose = newDose, strength = newDose)
-                                        it[index] = it[index].copy(medication = updatedMed)
+                                        val updated = med.copy(dose = newDose)
+                                        it[index] = it[index].copy(medication = updated)
                                     }
                                 },
                                 label = { Text("Dose") },
                                 modifier = Modifier.weight(1f),
-                                singleLine = true
-                            )
-                            OutlinedTextField(
-                                value = med.frequency,
-                                onValueChange = { newFreq ->
-                                    reviewItems = reviewItems.toMutableList().also {
-                                        val updatedMed = med.copy(frequency = newFreq)
-                                        it[index] = it[index].copy(medication = updatedMed)
-                                    }
-                                },
-                                label = { Text("Frequency") },
-                                modifier = Modifier.weight(1f),
-                                singleLine = true
+                                singleLine = true,
+                                shape = RoundedCornerShape(12.dp)
                             )
                         }
 
-                        Spacer(Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
                         OutlinedTextField(
                             value = med.timing,
                             onValueChange = { newTiming ->
                                 reviewItems = reviewItems.toMutableList().also {
-                                    val updatedMed = med.copy(timing = newTiming)
-                                    it[index] = it[index].copy(medication = updatedMed)
+                                    val updated = med.copy(timing = newTiming)
+                                    it[index] = it[index].copy(medication = updated)
                                 }
                             },
                             label = { Text("Instructions / Timing") },
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp)
                         )
                     }
                 }
             }
         }
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
-        Button(
+        PrimaryButton(
+            text = "Save to Regimen (${reviewItems.size})",
+            icon = Icons.Default.Check,
             onClick = { onSave(reviewItems) },
             modifier = Modifier
                 .fillMaxWidth()
-                .height(50.dp),
-            shape = RoundedCornerShape(12.dp)
-        ) {
-            Icon(Icons.Filled.Check, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Text("Confirm & Save to Medications", fontWeight = FontWeight.Bold)
-        }
+                .padding(bottom = 16.dp)
+        )
     }
 }
 
-// ── Pipeline & File Helper Functions ─────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers for document processing
+// ─────────────────────────────────────────────────────────────────────────────
+
+private fun copyUriToTempFile(context: Context, uri: Uri, isPdf: Boolean): File {
+    val ext = if (isPdf) ".pdf" else ".jpg"
+    val tempFile = File(context.cacheDir, "imported_${System.currentTimeMillis()}$ext")
+    context.contentResolver.openInputStream(uri)?.use { input ->
+        FileOutputStream(tempFile).use { output ->
+            input.copyTo(output)
+        }
+    }
+    return tempFile
+}
+
+private fun renderPdfFirstPageToBitmap(context: Context, pdfFile: File): File? {
+    return try {
+        val fileDescriptor = ParcelFileDescriptor.open(pdfFile, ParcelFileDescriptor.MODE_READ_ONLY)
+        val renderer = PdfRenderer(fileDescriptor)
+        if (renderer.pageCount > 0) {
+            val page = renderer.openPage(0)
+            val bitmap = Bitmap.createBitmap(page.width * 2, page.height * 2, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+            canvas.drawColor(android.graphics.Color.WHITE)
+            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+            page.close()
+            renderer.close()
+            fileDescriptor.close()
+
+            val renderedImageFile = File(context.cacheDir, "rendered_page_${System.currentTimeMillis()}.png")
+            FileOutputStream(renderedImageFile).use { out ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+            }
+            renderedImageFile
+        } else {
+            renderer.close()
+            fileDescriptor.close()
+            null
+        }
+    } catch (e: Exception) {
+        Log.e("ScannerScreen", "PDF rendering error", e)
+        null
+    }
+}
 
 private suspend fun processDocumentAndPipeline(
     context: Context,
@@ -611,51 +680,5 @@ private suspend fun processDocumentAndPipeline(
         throw IllegalStateException("No valid medications found to review.")
     }
 
-    // Run end-to-end normalization & safety evaluation pipeline!
     return MedicationIngestionPipeline.evaluatePipeline(context, candidateMeds)
-}
-
-/**
- * Renders the first page of a PDF document into a high-resolution Bitmap and saves as JPG.
- * Standard Android SDK PdfRenderer (API 21+).
- */
-private fun renderPdfFirstPageToBitmap(context: Context, pdfFile: File): File? {
-    return try {
-        val fileDescriptor = ParcelFileDescriptor.open(pdfFile, ParcelFileDescriptor.MODE_READ_ONLY)
-        val pdfRenderer = PdfRenderer(fileDescriptor)
-        if (pdfRenderer.pageCount > 0) {
-            val page = pdfRenderer.openPage(0)
-            val bitmap = Bitmap.createBitmap(page.width * 2, page.height * 2, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(bitmap)
-            canvas.drawColor(AndroidColor.WHITE)
-            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-            page.close()
-            pdfRenderer.close()
-            fileDescriptor.close()
-
-            val renderedFile = File(context.cacheDir, "pdf_render_${System.currentTimeMillis()}.jpg")
-            FileOutputStream(renderedFile).use { out ->
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
-            }
-            renderedFile
-        } else {
-            pdfRenderer.close()
-            fileDescriptor.close()
-            null
-        }
-    } catch (e: Exception) {
-        Log.e("ScannerScreen", "PDF render to bitmap error", e)
-        null
-    }
-}
-
-private fun copyUriToTempFile(context: Context, uri: Uri, isPdf: Boolean): File {
-    val ext = if (isPdf) ".pdf" else ".jpg"
-    val tempFile = File(context.cacheDir, "document_${System.currentTimeMillis()}$ext")
-    context.contentResolver.openInputStream(uri)?.use { input ->
-        FileOutputStream(tempFile).use { output ->
-            input.copyTo(output)
-        }
-    }
-    return tempFile
 }

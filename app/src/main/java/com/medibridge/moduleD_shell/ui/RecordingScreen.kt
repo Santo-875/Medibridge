@@ -44,6 +44,8 @@ import okhttp3.RequestBody.Companion.asRequestBody
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
+import com.medibridge.core.theme.*
+import com.medibridge.moduleD_shell.ui.components.*
 
 /**
  * RecordingScreen — Bilingual doctor consultation voice recorder.
@@ -466,7 +468,11 @@ fun RecordingScreen(
                             fontWeight = FontWeight.Bold,
                             color = if (isRecording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
                         )
-                        Spacer(Modifier.height(20.dp))
+                        Spacer(Modifier.height(12.dp))
+
+                        LiveWaveform(isRecording = isRecording)
+
+                        Spacer(Modifier.height(16.dp))
 
                         Box(contentAlignment = Alignment.Center, modifier = Modifier.size(120.dp)) {
                             if (isRecording) {
@@ -728,7 +734,7 @@ private fun RecordingHistoryCard(recording: RecordingEntity) {
                         Icon(
                             Icons.Filled.CheckCircle,
                             contentDescription = null,
-                            tint     = Color(0xFF2E7D32),
+                            tint     = StatusVerified,
                             modifier = Modifier.size(14.dp)
                         )
                         Spacer(Modifier.width(4.dp))
@@ -791,16 +797,16 @@ private fun UntranslatedRecordingCard(
         modifier = Modifier.fillMaxWidth(),
         shape    = RoundedCornerShape(12.dp),
         colors   = CardDefaults.cardColors(
-            containerColor = Color(0xFFFFF8E1)  // warm amber tint
+            containerColor = StatusReviewBg
         ),
-        border   = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFF57F17))
+        border   = androidx.compose.foundation.BorderStroke(1.dp, StatusReview.copy(alpha = 0.5f))
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     Icons.Filled.HourglassEmpty,
                     contentDescription = null,
-                    tint     = Color(0xFFF57F17),
+                    tint     = StatusReview,
                     modifier = Modifier.size(14.dp)
                 )
                 Spacer(Modifier.width(6.dp))
@@ -808,17 +814,17 @@ private fun UntranslatedRecordingCard(
                     text       = dateFormatted,
                     style      = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
-                    color      = Color(0xFFE65100)
+                    color      = StatusReview
                 )
                 Spacer(Modifier.width(6.dp))
                 Surface(
                     shape = RoundedCornerShape(4.dp),
-                    color = Color(0xFFF57F17).copy(alpha = 0.15f)
+                    color = StatusReview.copy(alpha = 0.15f)
                 ) {
                     Text(
                         text     = "RAW",
                         style    = MaterialTheme.typography.labelSmall,
-                        color    = Color(0xFFE65100),
+                        color    = StatusReview,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                     )
@@ -839,29 +845,15 @@ private fun UntranslatedRecordingCard(
                 )
             }
             Spacer(Modifier.height(10.dp))
-            Button(
-                onClick  = onRetry,
-                enabled  = !isRetrying && audioExists,
+            PrimaryButton(
+                text = if (isRetrying) "Retrying..." else "Convert to Text",
+                icon = Icons.Default.Refresh,
+                onClick = onRetry,
+                enabled = !isRetrying && audioExists,
+                isLoading = isRetrying,
                 modifier = Modifier.fillMaxWidth(),
-                shape    = RoundedCornerShape(8.dp),
-                colors   = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFFE65100)
-                )
-            ) {
-                if (isRetrying) {
-                    CircularProgressIndicator(
-                        modifier    = Modifier.size(16.dp),
-                        strokeWidth = 2.dp,
-                        color       = Color.White
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("Retrying...", color = Color.White)
-                } else {
-                    Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color.White)
-                    Spacer(Modifier.width(6.dp))
-                    Text("Convert to Text", color = Color.White, fontWeight = FontWeight.Bold)
-                }
-            }
+                size = ButtonSize.Small
+            )
         }
     }
 }
@@ -880,3 +872,38 @@ private fun StorageStat(label: String, value: String) {
         Text(value, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
     }
 }
+
+@Composable
+fun LiveWaveform(isRecording: Boolean, modifier: Modifier = Modifier) {
+    val infiniteTransition = rememberInfiniteTransition(label = "waveformAnim")
+    Row(
+        modifier = modifier.height(44.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        val barCount = 18
+        for (i in 0 until barCount) {
+            val animFraction by infiniteTransition.animateFloat(
+                initialValue = 0.2f,
+                targetValue = 1.0f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(durationMillis = 350 + (i * 45) % 300, easing = FastOutSlowInEasing),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "bar_$i"
+            )
+            val barHeight = if (isRecording) (animFraction * 40).dp.coerceAtLeast(6.dp) else 6.dp
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .height(barHeight)
+                    .clip(CircleShape)
+                    .background(
+                        if (isRecording) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)
+                    )
+            )
+        }
+    }
+}
+

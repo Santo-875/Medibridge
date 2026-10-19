@@ -1,5 +1,6 @@
 package com.medibridge.moduleB_safety.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -29,6 +30,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.medibridge.core.model.MedicationConflict
 import com.medibridge.core.model.MedicationObject
 import com.medibridge.core.theme.*
+import com.medibridge.moduleD_shell.ui.components.*
 import com.medibridge.moduleB_safety.data.SafetyCheckEntity
 import com.medibridge.moduleB_safety.logic.AiSafetyResponse
 import com.medibridge.moduleB_safety.logic.SafetyEngine
@@ -59,18 +61,26 @@ fun SafetyScreen(
             TopAppBar(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Filled.Shield,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onPrimary,
-                            modifier = Modifier.size(24.dp)
-                        )
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Shield,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
                         Spacer(Modifier.width(10.dp))
                         Text(
                             text = "Medication Safety",
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onPrimary
+                            color = MaterialTheme.colorScheme.onBackground
                         )
                     }
                 },
@@ -79,12 +89,12 @@ fun SafetyScreen(
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back to Home",
-                            tint = MaterialTheme.colorScheme.onPrimary
+                            tint = MaterialTheme.colorScheme.onBackground
                         )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary
+                    containerColor = MaterialTheme.colorScheme.background
                 )
             )
         },
@@ -698,21 +708,20 @@ private fun ConflictCard(
         else -> Triple("VERIFICATION WARNING", StatusReviewBg, StatusReview)
     }
 
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .shadow(2.dp, RoundedCornerShape(14.dp)),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Surface(
-                    shape = RoundedCornerShape(6.dp),
+                    shape = CircleShape,
                     color = badgeBg
                 ) {
                     Text(
@@ -741,6 +750,17 @@ private fun ConflictCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface,
                 lineHeight = 18.sp
+            )
+
+            Spacer(Modifier.height(12.dp))
+
+            var actionFlagged by remember { mutableStateOf(false) }
+            PrimaryButton(
+                text = if (actionFlagged) "Consultation Flagged" else "Flag for Doctor Review",
+                icon = if (actionFlagged) Icons.Default.Check else Icons.Default.MedicalServices,
+                onClick = { actionFlagged = true },
+                size = ButtonSize.Small,
+                modifier = Modifier.fillMaxWidth()
             )
         }
     }

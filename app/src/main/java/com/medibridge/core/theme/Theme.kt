@@ -9,15 +9,6 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MediBridge Material3 Color Schemes
-//
-// IMPORTANT: Every module composable MUST be wrapped inside MediBridgeTheme.
-// Never use MaterialTheme.colorScheme values hardcoded — always reference
-// these role names (primary, background, surface, etc.) so dark/light mode
-// switches propagate automatically.
-// ─────────────────────────────────────────────────────────────────────────────
-
 private val LightColorScheme = lightColorScheme(
     primary            = TealPrimary,
     onPrimary          = OnTeal,
@@ -76,12 +67,6 @@ private val DarkColorScheme = darkColorScheme(
     outlineVariant     = DarkOutline
 )
 
-/**
- * Root theme composable — wrap your entire app (and every module preview) in this.
- *
- * @param darkTheme  Controlled by SettingsViewModel; defaults to system setting.
- * @param content    The composable tree to theme.
- */
 @Composable
 fun MediBridgeTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
@@ -89,18 +74,21 @@ fun MediBridgeTheme(
 ) {
     val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
 
-    // Sync the system status bar color with the theme
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
-            window.statusBarColor = colorScheme.primary.toArgb()
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
+            window.statusBarColor = colorScheme.background.toArgb()
+            window.navigationBarColor = colorScheme.surface.toArgb()
+            val insetsController = WindowCompat.getInsetsController(window, view)
+            insetsController.isAppearanceLightStatusBars = !darkTheme
+            insetsController.isAppearanceLightNavigationBars = !darkTheme
         }
     }
 
     MaterialTheme(
         colorScheme = colorScheme,
+        shapes      = MediBridgeShapes,
         typography  = MediBridgeTypography,
         content     = content
     )
