@@ -1,3 +1,4 @@
+# Gradle & Android
 .gradle
 .idea
 /local.properties
@@ -29,14 +30,39 @@ secrets.properties
 # Test results
 /test-results
 
-# Backend & Python
+# Backend & Python virtual environments
 .venv/
-__pycache__/
-*.pyc
-*.db
-image_uploads/
-audio_uploads/
+venv/
+ENV/
+env/
 backend/.venv/
 final_integration/
 mod_integration/
+
+# Python cache & bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+*.pyc
+*.db
+.pytest_cache/
 *.log
+
+# Uploaded media & processing artifacts
+image_uploads/
+audio_uploads/
+prescription_scanning/image_uploads/
+speech_to_text/audio_uploads/
+speech_to_text/queue/
+uploads/
+
+# PaddleOCR cached models & temp files
+.paddleocr/
+.paddlex/
+
+# IDE & OS files
+.vscode/
+*.swp
+*.swo
+Thumbs.db
