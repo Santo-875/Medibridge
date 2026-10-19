@@ -138,7 +138,7 @@ class ChatRepository(private val context: Context) {
 
                 val request = GeminiApiClient.buildTextRequest(prompt, jsonOutput = false)
                 val response = GeminiApiClient.service.generateContent(
-                    model = "gemini-1.5-flash",
+                    model = "gemini-3.5-flash",
                     apiKey = apiKey,
                     request = request
                 )
@@ -203,14 +203,14 @@ class ChatRepository(private val context: Context) {
 
                 val request = GeminiApiClient.buildTextRequest(prompt, jsonOutput = false)
                 val response = GeminiApiClient.service.generateContent(
-                    model = "gemini-1.5-flash",
+                    model = "gemini-3.5-flash",
                     apiKey = apiKey,
                     request = request
                 )
 
                 val replyText = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
                 if (!replyText.isNullOrBlank()) {
-                    return@withContext "📋 **Consultation Session Summary**:\n\n${replyText.trim()}"
+                    return@withContext "**Consultation Session Summary**:\n\n${replyText.trim()}"
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Gemini summarization failed: ${e.message}, falling back to local summary")
@@ -226,11 +226,11 @@ class ChatRepository(private val context: Context) {
 
         val conflictSummary = safetyChecks.filter { it.findingType != "SAFE" }
             .take(2)
-            .joinToString("\n") { "• ⚠️ ${it.medicineA} + ${it.medicineB}: ${it.aiMessage}" }
+            .joinToString("\n") { "• [Alert] ${it.medicineA} + ${it.medicineB}: ${it.aiMessage}" }
             .ifBlank { "• No critical medication interaction warnings identified." }
 
         """
-        📋 **Session Clinical Summary**:
+        **Session Clinical Summary**:
         
         **1. Discussion Overview**:
         • Reviewed ${medications.size} active medication regimen(s) and answered dosage queries.

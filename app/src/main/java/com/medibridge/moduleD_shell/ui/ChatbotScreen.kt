@@ -44,7 +44,7 @@ fun ChatbotScreen(onBack: () -> Unit) {
     val chatRepository = remember { ChatRepository(context) }
     var messageText by remember { mutableStateOf("") }
     val messages    = remember { mutableStateListOf(
-        ChatMessage(id = "init", text = "Hi! I'm Medi 👋 — your personal medication assistant.\n\nAsk me about your medicines, side effects, schedule, or drug interactions.", isBot = true)
+        ChatMessage(id = "init", text = "Hi! I'm Medi, your personal clinical medication assistant.\n\nAsk me about your medicines, side effects, schedule, or drug interactions.", isBot = true)
     ) }
     val listState   = rememberLazyListState()
     val scope       = rememberCoroutineScope()
@@ -369,7 +369,7 @@ private fun dummyBotReply(userMessage: String): String {
         userMessage.contains("metformin", ignoreCase = true) ->
             "Metformin (500mg) should be taken twice daily with meals. Common side effects include nausea and diarrhea — these usually subside after a few weeks."
         userMessage.contains("interaction", ignoreCase = true) ->
-            "⚠️ I detected a potential interaction between Amlodipine and Lisinopril. Both lower blood pressure — combining them may cause dizziness. Please consult your doctor."
+            "Caution: I detected a potential interaction between Amlodipine and Lisinopril. Both lower blood pressure — combining them may cause dizziness. Please consult your doctor."
         userMessage.contains("schedule", ignoreCase = true) || userMessage.contains("today", ignoreCase = true) ->
             "Today's schedule:\n• 8:00 AM — Metformin 500mg (with breakfast)\n• 9:00 AM — Amlodipine 5mg + Vitamin D3\n• 10:00 PM — Lisinopril 10mg (before bed)"
         else ->

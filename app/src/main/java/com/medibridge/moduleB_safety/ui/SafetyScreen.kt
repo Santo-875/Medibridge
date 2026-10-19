@@ -393,7 +393,7 @@ private fun CandidateMedicationCard(
                         color = StatusVerifiedBg
                     ) {
                         Text(
-                            text = "✓ Cross-Verified",
+                            text = "Cross-Verified",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
                             color = StatusVerified,
@@ -406,7 +406,7 @@ private fun CandidateMedicationCard(
                         color = StatusReviewBg
                     ) {
                         Text(
-                            text = "⚠ Unverified Formula",
+                            text = "Unverified Formula",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
                             color = StatusReview,

@@ -23,13 +23,15 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * SettingsScreen — App configuration with functional controls for:
- *   • Dark Mode
- *   • Recordings section (list of past recordings, tap for full transcript/summary)
- *   • Reminder voice: TTS language toggle (English / Tamil)
- *   • Reminders & Caretaker alerts: Snooze intervals & Caretaker phone number
- *   • Backend FastAPI URL
- *   • 4 Demo Scenarios (including "No Scenario" clean state)
+ * SettingsScreen — User-facing preferences and local storage configuration.
+ *
+ * Exposes consumer settings:
+ *   • Appearance (Dark / Light Theme)
+ *   • Reminder Voice & Audio (TTS language English / Tamil, notification snooze duration)
+ *   • Caretaker Emergency Contact (Phone number for missed-dose alerts)
+ *   • Consultation Audio Archive
+ *   • Data & Storage Management (Reset / clear local Room database)
+ *   • About MediBridge (Build version, security enclaves, backend status)
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -37,26 +39,19 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
     val context = LocalContext.current
     val isDarkMode by viewModel.isDarkMode.collectAsState()
     val ttsLanguage by viewModel.ttsLanguage.collectAsState()
-    val currentUrl by viewModel.backendBaseUrl.collectAsState()
     val caretakerPhone by viewModel.caretakerPhone.collectAsState()
     val snoozeInterval by viewModel.snoozeIntervalMinutes.collectAsState()
-    val activeScenario by viewModel.activeScenario.collectAsState()
     val demoStatus by viewModel.demoStatus.collectAsState()
-
-    LaunchedEffect(Unit) {
-        viewModel.initGeminiKey(context)
-    }
 
     val recordingsFlow = remember(context) { viewModel.observeRecordings(context) }
     val recordingsList by recordingsFlow.collectAsState(initial = emptyList())
     var selectedRecordingForDialog by remember { mutableStateOf<RecordingEntity?>(null) }
-
-    val geminiKey by viewModel.geminiApiKey.collectAsState()
-    val aiStatus by viewModel.aiStatus.collectAsState()
-    var geminiKeyInput by remember(geminiKey) { mutableStateOf(geminiKey) }
-
-    var urlInput by remember(currentUrl) { mutableStateOf(currentUrl) }
     var phoneInput by remember(caretakerPhone) { mutableStateOf(caretakerPhone) }
+    var phoneSavedFeedback by remember { mutableStateOf(false) }
+
+    var showUrlDialog by remember { mutableStateOf(false) }
+    var currentUrl by remember { mutableStateOf(com.medibridge.core.network.BackendClient.getBaseUrl()) }
+    var urlInput by remember { mutableStateOf(currentUrl) }
 
     // Dialog showing full transcript & clinical summary of clicked recording
     selectedRecordingForDialog?.let { recording ->
@@ -107,6 +102,53 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
         )
     }
 
+    // Dialog allowing user to update backend server URL without rebuilding APK
+    if (showUrlDialog) {
+        AlertDialog(
+            onDismissRequest = { showUrlDialog = false },
+            icon = { Icon(Icons.Filled.Link, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+            title = { Text("Backend Server URL", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Paste your active Cloudflare Tunnel, Ngrok, or local IP address here. Changes take effect immediately without rebuilding the APK.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = urlInput,
+                        onValueChange = { urlInput = it },
+                        label = { Text("Server URL") },
+                        placeholder = { Text("https://your-tunnel.trycloudflare.com/") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val trimmed = urlInput.trim()
+                        if (trimmed.isNotBlank()) {
+                            com.medibridge.core.network.BackendClient.updateBaseUrl(trimmed, context)
+                            currentUrl = com.medibridge.core.network.BackendClient.getBaseUrl()
+                            android.widget.Toast.makeText(context, "Backend URL updated", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                        showUrlDialog = false
+                    }
+                ) {
+                    Text("Save & Connect")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showUrlDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -129,40 +171,50 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                 .fillMaxSize()
                 .padding(paddingValues)
                 .verticalScroll(rememberScrollState())
+                .padding(vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // ── Appearance Section ────────────────────────────────────────────
-            SettingsSectionHeader(title = "Appearance")
-
-            SettingsToggleRow(
-                icon = if (isDarkMode) Icons.Filled.DarkMode else Icons.Filled.LightMode,
-                title = "Dark Mode",
-                description = "Switch between light and dark theme",
-                checked = isDarkMode,
-                onToggle = { viewModel.toggleDarkMode() }
-            )
-
-            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-
-            // ── Reminder Voice Section (TTS) ──────────────────────────────────
-            SettingsSectionHeader(title = "Reminder Voice & Audio")
-
-            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.VolumeUp,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = "Voice Assistant Language (TTS)",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold
+            // ── 1. Appearance ────────────────────────────────────────────────
+            SettingsCard(title = "Appearance", icon = Icons.Filled.Palette) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Dark Mode",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = if (isDarkMode) "Dark theme enabled for low-light environments" else "Light theme enabled",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = isDarkMode,
+                        onCheckedChange = { viewModel.toggleDarkMode() },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                            checkedTrackColor = MaterialTheme.colorScheme.primary
+                        )
                     )
                 }
+            }
+
+            // ── 2. Reminder Voice & Audio ─────────────────────────────────────
+            SettingsCard(title = "Voice & Alarms", icon = Icons.AutoMirrored.Filled.VolumeUp) {
+                Text(
+                    text = "Spoken Reminder Language",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "Controls the on-device Text-to-Speech synthesizer for spoken medication alarms and phone call reminders.",
+                    text = "Select speech language for on-device spoken medication reminders and verbal dose prompts.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -180,106 +232,24 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                         }
                     }
                 }
-            }
 
-            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                Spacer(Modifier.height(16.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                Spacer(Modifier.height(14.dp))
 
-            // ── Past Audio Recordings Section ─────────────────────────────────
-            SettingsSectionHeader(title = "Consultation Recordings (${recordingsList.size})")
-
-            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                if (recordingsList.isEmpty()) {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text(
-                                text = "No audio notes saved yet",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Spacer(Modifier.height(2.dp))
-                            Text(
-                                text = "Tap the microphone icon on Home to record a doctor consultation session.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                } else {
-                    recordingsList.take(5).forEach { rec ->
-                        val dateStr = SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault()).format(Date(rec.timestamp))
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp)
-                                .clickable { selectedRecordingForDialog = rec },
-                            shape = RoundedCornerShape(12.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(12.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = dateStr,
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                    Spacer(Modifier.height(2.dp))
-                                    Text(
-                                        text = rec.summary.ifBlank { rec.transcript },
-                                        style = MaterialTheme.typography.bodySmall,
-                                        maxLines = 1
-                                    )
-                                }
-                                Icon(
-                                    imageVector = Icons.Filled.ChevronRight,
-                                    contentDescription = "View Details",
-                                    tint = MaterialTheme.colorScheme.outline
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-
-            // ── Caretaker & Reminders Configuration ───────────────────────────
-            SettingsSectionHeader(title = "Reminders & Caretaker Alerts")
-
-            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                OutlinedTextField(
-                    value = phoneInput,
-                    onValueChange = { phoneInput = it },
-                    label = { Text("Caretaker Escalation Phone") },
-                    placeholder = { Text("+1 555-0199") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(Modifier.height(8.dp))
-                Button(
-                    onClick = { viewModel.updateCaretakerPhone(phoneInput) },
-                    modifier = Modifier.align(Alignment.End)
-                ) {
-                    Text("Save Phone")
-                }
-
-                Spacer(Modifier.height(10.dp))
                 Text(
-                    text = "Notification Snooze Duration",
+                    text = "Reminder Snooze Interval",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold
                 )
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "Time before repeating a pending dose notification if unacknowledged.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(10.dp))
+
                 SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                     val intervals = listOf(10 to "10 min", 15 to "15 min", 30 to "30 min")
                     intervals.forEachIndexed { index, (mins, label) ->
@@ -294,152 +264,154 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                 }
             }
 
-            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-
-            // ── Gemini AI Engine & API Key ─────────────────────────────────────
-            SettingsSectionHeader(title = "Gemini AI Engine")
-
-            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                // AI Status Banner
-                val isConnected = aiStatus.contains("Connected")
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = if (isConnected) androidx.compose.ui.graphics.Color(0xFFE8F5E9) else androidx.compose.ui.graphics.Color(0xFFFFF3E0),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = if (isConnected) Icons.Filled.CheckCircle else Icons.Filled.Warning,
-                            contentDescription = null,
-                            tint = if (isConnected) androidx.compose.ui.graphics.Color(0xFF2E7D32) else androidx.compose.ui.graphics.Color(0xFFE65100),
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = aiStatus,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = if (isConnected) androidx.compose.ui.graphics.Color(0xFF1B5E20) else androidx.compose.ui.graphics.Color(0xFFBF360C)
-                        )
-                    }
-                }
-
-                Spacer(Modifier.height(8.dp))
+            // ── 3. Caretaker Emergency Escalation ─────────────────────────────
+            SettingsCard(title = "Caretaker Emergency Escalation", icon = Icons.Filled.ContactPhone) {
                 Text(
-                    text = "Powers clinical chat, medication safety analysis, patient summaries, and drug interaction alerts. Key is pre-loaded from .env at build time, but can be overridden below.",
+                    text = "Designated Emergency Contact",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "Phone number automatically contacted if a critical medication dose is missed by more than 60 minutes.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(12.dp))
 
                 OutlinedTextField(
-                    value = geminiKeyInput,
-                    onValueChange = { geminiKeyInput = it },
-                    label = { Text("Gemini API Key") },
-                    placeholder = { Text("AIzaSy...") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(Modifier.height(6.dp))
-
-                var isKeySaved by remember { mutableStateOf(false) }
-                Button(
-                    onClick = {
-                        viewModel.updateGeminiApiKey(geminiKeyInput, context)
-                        isKeySaved = true
-                        android.widget.Toast.makeText(context, "Gemini API key updated", android.widget.Toast.LENGTH_SHORT).show()
+                    value = phoneInput,
+                    onValueChange = {
+                        phoneInput = it
+                        phoneSavedFeedback = false
                     },
-                    modifier = Modifier.align(Alignment.End),
-                    colors = if (isKeySaved) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary) else ButtonDefaults.buttonColors()
-                ) {
-                    Icon(if (isKeySaved) Icons.Filled.Check else Icons.Filled.Save, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(if (isKeySaved) "Saved!" else "Save Key")
-                }
-            }
-
-            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-
-            // ── Backend Connection Section ────────────────────────────────────
-            SettingsSectionHeader(title = "Backend Connection")
-
-            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                OutlinedTextField(
-                    value = urlInput,
-                    onValueChange = { urlInput = it },
-                    label = { Text("FastAPI Backend Base URL") },
-                    placeholder = { Text("http://10.0.2.2:8000/") },
+                    label = { Text("Emergency Phone Number") },
+                    placeholder = { Text("+1 555-0199 or +91 9876543210") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                var isUrlSaved by remember { mutableStateOf(false) }
-                Button(
-                    onClick = {
-                        viewModel.updateBackendBaseUrl(urlInput, context)
-                        isUrlSaved = true
-                        android.widget.Toast.makeText(context, "Backend URL saved: ${urlInput.trim()}", android.widget.Toast.LENGTH_SHORT).show()
-                    },
-                    modifier = Modifier.align(Alignment.End),
-                    colors = if (isUrlSaved) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary) else ButtonDefaults.buttonColors()
-                ) {
-                    Icon(if (isUrlSaved) Icons.Filled.Check else Icons.Filled.Save, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(if (isUrlSaved) "Saved!" else "Save URL")
-                }
-            }
-
-            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-
-            // ── Pitch Demo Scenarios Section ──────────────────────────────────
-            SettingsSectionHeader(title = "Clinical Scenarios & Demo Modes")
-
-            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                Text(
-                    text = "Select a scenario to seed test data or choose 'No Scenario' to start completely fresh with live scanning & voice:",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
                 )
                 Spacer(Modifier.height(10.dp))
 
-                // Row 1: Scenarios 1 & 2
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = { viewModel.selectScenario(context, 1) },
-                        modifier = Modifier.weight(1f),
-                        colors = if (activeScenario == 1) ButtonDefaults.buttonColors() else ButtonDefaults.outlinedButtonColors()
-                    ) {
-                        Text("1: Mr Tan Ah Kow", style = MaterialTheme.typography.labelSmall)
-                    }
-                    Button(
-                        onClick = { viewModel.selectScenario(context, 2) },
-                        modifier = Modifier.weight(1f),
-                        colors = if (activeScenario == 2) ButtonDefaults.buttonColors() else ButtonDefaults.outlinedButtonColors()
-                    ) {
-                        Text("2: Hypertn", style = MaterialTheme.typography.labelSmall)
+                Button(
+                    onClick = {
+                        viewModel.updateCaretakerPhone(phoneInput)
+                        val prefs = context.getSharedPreferences("medibridge_prefs", android.content.Context.MODE_PRIVATE)
+                        prefs.edit().putString("caretaker_phone", phoneInput.trim()).apply()
+                        phoneSavedFeedback = true
+                        android.widget.Toast.makeText(context, "Caretaker contact saved", android.widget.Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.align(Alignment.End),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(if (phoneSavedFeedback) Icons.Filled.Check else Icons.Filled.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (phoneSavedFeedback) "Saved" else "Save Contact")
+                }
+            }
+
+            // ── 4. Past Audio Consultations Archive ───────────────────────────
+            SettingsCard(title = "Consultation Audio Archive (${recordingsList.size})", icon = Icons.Filled.History) {
+                if (recordingsList.isEmpty()) {
+                    Text(
+                        text = "No recorded doctor consultations yet. Use the Record tab to capture audio and transcribe doctor advice in real time.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        recordingsList.take(4).forEach { rec ->
+                            val dateStr = SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault()).format(Date(rec.timestamp))
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { selectedRecordingForDialog = rec }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = dateStr,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Spacer(Modifier.height(2.dp))
+                                        Text(
+                                            text = rec.summary.ifBlank { rec.transcript },
+                                            style = MaterialTheme.typography.bodySmall,
+                                            maxLines = 1
+                                        )
+                                    }
+                                    Icon(
+                                        imageVector = Icons.Filled.ChevronRight,
+                                        contentDescription = "View Details",
+                                        tint = MaterialTheme.colorScheme.outline
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
+            }
 
-                Spacer(Modifier.height(8.dp))
+            // ── 5. Data & Storage Management ──────────────────────────────────
+            SettingsCard(title = "Data & Storage Management", icon = Icons.Filled.Storage) {
+                Text(
+                    text = "Reset Local Records",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "Permanently clears all scanned prescriptions, schedule reminders, safety interaction flags, and consultation recordings from this device.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(14.dp))
 
-                // Row 2: Scenario 3 & No Scenario (Option 4)
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = { viewModel.selectScenario(context, 3) },
-                        modifier = Modifier.weight(1f),
-                        colors = if (activeScenario == 3) ButtonDefaults.buttonColors() else ButtonDefaults.outlinedButtonColors()
-                    ) {
-                        Text("3: Caretaker", style = MaterialTheme.typography.labelSmall)
-                    }
-                    Button(
-                        onClick = { viewModel.selectScenario(context, 4) },
-                        modifier = Modifier.weight(1f),
-                        colors = if (activeScenario == 4) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary) else ButtonDefaults.outlinedButtonColors()
-                    ) {
-                        Text("4: No Scenario (Empty)", style = MaterialTheme.typography.labelSmall)
-                    }
+                var showConfirmDialog by remember { mutableStateOf(false) }
+
+                OutlinedButton(
+                    onClick = { showConfirmDialog = true },
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    ),
+                    modifier = Modifier.align(Alignment.End),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(Icons.Filled.DeleteOutline, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Clear All Data")
+                }
+
+                if (showConfirmDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showConfirmDialog = false },
+                        title = { Text("Reset Patient Database?") },
+                        text = { Text("This will permanently remove all cached medications, schedules, and recordings stored on this device. This cannot be undone.") },
+                        confirmButton = {
+                            TextButton(
+                                onClick = {
+                                    viewModel.clearAllData(context)
+                                    showConfirmDialog = false
+                                    android.widget.Toast.makeText(context, "All patient records cleared", android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            ) {
+                                Text("Reset", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showConfirmDialog = false }) {
+                                Text("Cancel")
+                            }
+                        }
+                    )
                 }
 
                 if (!demoStatus.isNullOrBlank()) {
@@ -459,45 +431,95 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                 }
             }
 
-            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-
-            // ── About Section ─────────────────────────────────────────────────
-            SettingsSectionHeader(title = "About MediBridge")
-
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer
-                )
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Filled.LocalHospital,
-                            tint = MaterialTheme.colorScheme.primary,
-                            contentDescription = null
-                        )
-                        Spacer(Modifier.width(10.dp))
+            // ── 6. About MediBridge & Security ────────────────────────────────
+            SettingsCard(title = "System & Security", icon = Icons.Filled.Security) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Filled.VerifiedUser,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column {
                         Text(
-                            text = "MediBridge AI",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                            text = "MediBridge Clinical Enclave",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Version 1.0 • Build 2026",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Spacer(Modifier.height(6.dp))
+                }
+
+                Spacer(Modifier.height(10.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                Spacer(Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            urlInput = com.medibridge.core.network.BackendClient.getBaseUrl()
+                            showUrlDialog = true
+                        },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Backend Service Connection",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = if (currentUrl.length > 36) currentUrl.take(34) + "..." else currentUrl,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.outline
+                        )
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = "Edit",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(Modifier.width(2.dp))
+                            Icon(
+                                imageVector = Icons.Filled.Edit,
+                                contentDescription = "Edit URL",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(12.dp)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Text(
-                        text = "Version 1.0.0 (Unified Integration)",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                        text = "Local Storage Encryption",
+                        style = MaterialTheme.typography.bodySmall
                     )
                     Text(
-                        text = "Shared AppDatabase · Central Safety Engine · End-to-End Pipeline",
+                        text = "Encrypted SQLite",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
+                        color = MaterialTheme.colorScheme.outline
                     )
                 }
             }
@@ -508,65 +530,41 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
 }
 
 @Composable
-private fun SettingsSectionHeader(title: String) {
-    Text(
-        text = title.uppercase(),
-        style = MaterialTheme.typography.labelSmall,
-        fontWeight = FontWeight.Bold,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(start = 16.dp, top = 20.dp, bottom = 4.dp)
-    )
-}
-
-@Composable
-private fun SettingsToggleRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+private fun SettingsCard(
     title: String,
-    description: String,
-    checked: Boolean,
-    onToggle: () -> Unit
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    content: @Composable ColumnScope.() -> Unit
 ) {
-    Row(
+    Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(horizontal = 16.dp),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
-        Surface(
-            shape = RoundedCornerShape(10.dp),
-            color = MaterialTheme.colorScheme.primaryContainer,
-            modifier = Modifier.size(42.dp)
-        ) {
-            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.padding(18.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(bottom = 12.dp)
+            ) {
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(22.dp)
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
             }
+            content()
         }
-        Spacer(Modifier.width(14.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onBackground
-            )
-            Text(
-                text = description,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        Switch(
-            checked = checked,
-            onCheckedChange = { onToggle() },
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                checkedTrackColor = MaterialTheme.colorScheme.primary
-            )
-        )
     }
 }

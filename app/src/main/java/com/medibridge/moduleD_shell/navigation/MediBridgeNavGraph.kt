@@ -8,6 +8,7 @@ import com.medibridge.moduleB_safety.ui.SafetyScreen
 import com.medibridge.moduleD_shell.ui.AddEditMedicationScreen
 import com.medibridge.moduleD_shell.ui.ChatbotScreen
 import com.medibridge.moduleD_shell.ui.HomeScreen
+import com.medibridge.moduleD_shell.ui.IntroVideoScreen
 import com.medibridge.moduleD_shell.ui.RemindersScreen
 import com.medibridge.moduleD_shell.ui.ScannerScreen
 import com.medibridge.moduleD_shell.ui.SettingsScreen
@@ -16,8 +17,8 @@ import com.medibridge.moduleD_shell.viewmodel.SettingsViewModel
 /**
  * Central navigation graph for the MediBridge app.
  *
- * All 4 module screens are registered here.
- * Start destination is [Screen.Home].
+ * All module screens are registered here.
+ * Start destination is [Screen.Intro] which plays motion graphics/video and auto-routes to [Screen.Home].
  *
  * TO ADD A NEW MODULE SCREEN:
  *   1. Add a route to [Screen].
@@ -30,12 +31,25 @@ import com.medibridge.moduleD_shell.viewmodel.SettingsViewModel
 @Composable
 fun MediBridgeNavGraph(
     navController: NavHostController,
-    settingsViewModel: SettingsViewModel
+    settingsViewModel: SettingsViewModel,
+    onOpenDrawer: () -> Unit = {}
 ) {
     NavHost(
         navController    = navController,
-        startDestination = Screen.Home.route
+        startDestination = Screen.Intro.route
     ) {
+
+        // ── Module D: Intro Motion Graphics Video ─────────────────────────────
+        composable(Screen.Intro.route) {
+            IntroVideoScreen(
+                onIntroComplete = {
+                    navController.navigate(Screen.Home.route) {
+                        popUpTo(Screen.Intro.route) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                }
+            )
+        }
 
         // ── Module D: Home ────────────────────────────────────────────────────
         composable(Screen.Home.route) {
@@ -44,7 +58,8 @@ fun MediBridgeNavGraph(
                 onChatbotClick  = { navController.navigate(Screen.Chatbot.route) },
                 onReminderClick = { navController.navigate(Screen.Reminders.route) },
                 onSafetyClick   = { navController.navigate(Screen.SafetyDashboard.route) },
-                onRecordClick   = { navController.navigate(Screen.Recording.route) }
+                onRecordClick   = { navController.navigate(Screen.Recording.route) },
+                onOpenDrawer    = onOpenDrawer
             )
         }
 

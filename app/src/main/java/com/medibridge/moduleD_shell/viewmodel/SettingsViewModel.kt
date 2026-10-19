@@ -136,6 +136,18 @@ class SettingsViewModel : ViewModel() {
         }
     }
 
+    fun clearAllData(context: Context) {
+        viewModelScope.launch {
+            try {
+                _demoStatus.value = "Resetting database..."
+                DemoDataSeeder.clearAll(context)
+                _demoStatus.value = "All patient records and schedules have been cleared."
+            } catch (e: Exception) {
+                _demoStatus.value = "Failed to clear records: ${e.message}"
+            }
+        }
+    }
+
     fun loadAllDemoScenarios(context: Context) {
         viewModelScope.launch {
             _demoStatus.value = "Loading all 3 demo scenarios..."

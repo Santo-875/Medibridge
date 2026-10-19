@@ -29,12 +29,14 @@ class PrivacySummaryRepository(private val db: AppDatabase) {
 
         buildString {
             appendLine("=== PATIENT CLINICAL DOSSIER ===")
-            appendLine("Patient Name: Mr Tan Ah Kow (Male, 55 years old)")
-            appendLine("NRIC/FIN: S1111111X | Status: Divorced, Unemployed (Former cleaner)")
-            appendLine("Primary Caretaker: Mr Tan Ah Beng (Son, Co-resident)")
-            appendLine("Attending Physician: Dr Tan Ah Moi (MCR: 333333, Blackacre Hospital)")
-            appendLine("Clinical Diagnoses: 1. Dementia (Moderate-Severe) 2. Ischemic Stroke 3. Hypertension, Cardiomyopathy, Chronic Renal Disease")
-            appendLine("Mental Capacity Assessment: Lacks capacity in Personal Welfare & Property/Affairs (Mental Capacity Act)")
+            if (meds.isEmpty() && recordings.isEmpty()) {
+                appendLine("Status: No active clinical prescriptions or audio notes recorded.")
+                appendLine("Please capture a prescription or record a doctor consultation to assemble an auditable dossier.")
+                return@buildString
+            }
+
+            val caretakerContact = meds.firstOrNull { !it.caretakerPhone.isNullOrBlank() }?.caretakerPhone ?: "Not Registered"
+            appendLine("Primary Caretaker Phone: $caretakerContact")
             appendLine()
 
             appendLine("=== ACTIVE MEDICATION REGIMEN (${meds.size} Prescriptions) ===")
@@ -45,7 +47,7 @@ class PrivacySummaryRepository(private val db: AppDatabase) {
                     appendLine("• ${med.name} (${med.strength}) — Dose: ${med.dose} | Frequency: ${med.frequency}")
                     appendLine("  Timing: ${med.timing} | Duration: ${med.duration}")
                     if (med.conflicts.isNotEmpty()) {
-                        appendLine("  ⚠️ Conflict Flag: ${med.conflicts.joinToString("; ") { "${it.type}: ${it.detail}" }}")
+                        appendLine("  [Conflict Flag]: ${med.conflicts.joinToString("; ") { "${it.type}: ${it.detail}" }}")
                     }
                     if (med.consultationNotes.isNotBlank()) {
                         appendLine("  Doctor Note: ${med.consultationNotes}")
@@ -82,30 +84,34 @@ class PrivacySummaryRepository(private val db: AppDatabase) {
 
         buildString {
             appendLine("=== PHARMACY DISPENSING & VERIFICATION STATUS ===")
-            appendLine("Patient: Mr Tan Ah Kow (NRIC: S1111111X, Age 55)")
-            appendLine("Prescribing Doctor: Dr Tan Ah Moi (MCR: 333333, Blackacre Hospital)")
-            appendLine("Authorized Collector: Mr Tan Ah Beng (Son / Primary Caretaker)")
-            appendLine("Renal Caution: Chronic renal disease & cardiomyopathy on record.")
-            appendLine()
-
             if (meds.isEmpty()) {
                 appendLine("No active prescriptions currently on file for dispensing.")
-            } else {
-                appendLine("Active Medications to Dispense:")
-                meds.forEach { med ->
-                    appendLine("• Medicine: ${med.name}")
-                    appendLine("  Dispensed Dosage: ${med.dose} (${med.strength})")
-                    appendLine("  Instructions: ${med.timing} · ${med.frequency}")
-                    appendLine("  Course Duration: ${med.duration}")
-                    val verifiedStatus = if (med.verifiedByUser) "Verified by Caretaker" else "Requires Pharmacist Cross-Check"
-                    appendLine("  Status: $verifiedStatus")
-                }
+                return@buildString
+            }
+
+            val caretakerContact = meds.firstOrNull { !it.caretakerPhone.isNullOrBlank() }?.caretakerPhone ?: "Not Registered"
+            appendLine("Authorized Contact: $caretakerContact")
+            appendLine()
+
+            appendLine("Active Medications to Dispense:")
+            meds.forEach { med ->
+                appendLine("• Medicine: ${med.name}")
+                appendLine("  Dispensed Dosage: ${med.dose} (${med.strength})")
+                appendLine("  Instructions: ${med.timing} · ${med.frequency}")
+                appendLine("  Course Duration: ${med.duration}")
+                val verifiedStatus = if (med.verifiedByUser) "Verified by Patient/Caretaker" else "Requires Pharmacist Cross-Check"
+                appendLine("  Status: $verifiedStatus")
             }
 
             appendLine("\nPharmacist Advice:")
-            appendLine("• Co-administration of Lisinopril 10mg + Amlodipine 5mg requires monitoring for postural hypotension.")
-            appendLine("• Donepezil 5mg requires supervision by son Ah Beng due to patient's cognitive memory impairment.")
-            appendLine("• Next Refill Due: Schedule refill 5 days before 90-day course completion.")
+            val conflictMeds = meds.filter { it.conflicts.isNotEmpty() }
+            if (conflictMeds.isNotEmpty()) {
+                conflictMeds.forEach { med ->
+                    appendLine("• Caution on ${med.name}: ${med.conflicts.first().detail}")
+                }
+            } else {
+                appendLine("• All listed medications verified against current database.")
+            }
         }.trim()
     }
 
@@ -117,11 +123,8 @@ class PrivacySummaryRepository(private val db: AppDatabase) {
 
         buildString {
             appendLine("=== CARETAKER SUPPORT & ADHERENCE DASHBOARD ===")
-            appendLine("Patient: Mr Tan Ah Kow (Age 55) | Caretaker: Mr Tan Ah Beng (Son)")
-            appendLine("Caregiver Priority: High — Patient is incontinent, needs assistance with bathing & toilet. Feeds himself.")
-            appendLine("Mental Capacity Notice: Inability to retain dates/places/arithmetic. Full supervision required for medication administration.")
-            appendLine("Emergency Caretaker Phone: +65 9123 4567")
-            appendLine("Attending Clinic: Dr Tan Ah Moi, Blackacre Hospital (Tel: +65 6789 0101)")
+            val caretakerContact = meds.firstOrNull { !it.caretakerPhone.isNullOrBlank() }?.caretakerPhone ?: "Not Registered"
+            appendLine("Emergency Caretaker Phone: $caretakerContact")
             appendLine()
 
             appendLine("=== MEDICATION SCHEDULE & DOSING CHECKLIST ===")
@@ -132,7 +135,7 @@ class PrivacySummaryRepository(private val db: AppDatabase) {
                     val adherenceHistory = med.adherence
                     val missed = adherenceHistory.count { it.status.equals("missed", ignoreCase = true) }
                     val taken = adherenceHistory.count { it.status.equals("taken", ignoreCase = true) }
-                    val adherenceBadge = if (missed > 0) "⚠️ $missed missed dose(s)" else "✓ $taken dose(s) taken"
+                    val adherenceBadge = if (missed > 0) "$missed missed dose(s)" else "$taken dose(s) taken"
                     appendLine("• ${med.name} (${med.strength}): $adherenceBadge")
                     if (med.schedule.isNotEmpty()) {
                         appendLine("  Times: ${med.schedule.joinToString(", ") { "${it.slot} (${it.time})" }}")
@@ -141,8 +144,7 @@ class PrivacySummaryRepository(private val db: AppDatabase) {
             }
 
             appendLine("\nCaretaker Escalation Protocol:")
-            appendLine("• If morning or evening dose is missed by > 60 minutes, automated phone call escalation will trigger.")
-            appendLine("• In case of severe confusion, limb weakness, or difficulty swallowing, contact Blackacre Emergency immediately.")
+            appendLine("• If any dose is missed by > 60 minutes, automated phone call escalation will trigger.")
         }.trim()
     }
 }

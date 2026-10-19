@@ -22,7 +22,7 @@ object AppNetworkConfig {
      * >>> PASTE YOUR LAPTOP IP ADDRESS HERE (e.g. "http://192.168.1.50:8000/") <<<
      * Leave as "" to automatically use the value from the .env file (BuildConfig.BACKEND_BASE_URL).
      */
-    const val MANUAL_LAPTOP_IP: String = ""
+    const val MANUAL_LAPTOP_IP: String = " https://promises-practical-son-nelson.trycloudflare.com"
 
     val effectiveBaseUrl: String
         get() {

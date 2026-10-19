@@ -74,21 +74,29 @@ class ScheduleViewModel(
     init {
         viewModelScope.launch {
             try {
-                val db = AppDatabase.getInstance(getApplication())
-                val existing = db.medicationDao().getAllMedicationsDirect()
-                if (existing.isEmpty()) {
-                    com.medibridge.core.demo.DemoDataSeeder.seedPatientMrTanAhKow(db)
-                }
                 // Run automatic missed dose check on app start
                 repository.checkAndMarkMissedDoses()
             } catch (e: Exception) {
-                android.util.Log.e("ScheduleViewModel", "Failed to initialize schedule / seed data", e)
+                android.util.Log.e("ScheduleViewModel", "Failed to initialize schedule", e)
             }
         }
     }
 
     /**
-     * Re-seeds or loads the primary clinical schedule for Mr Tan Ah Kow into Room DB.
+     * Refreshes active schedules and triggers missed-dose re-check.
+     */
+    fun refreshSchedule() {
+        viewModelScope.launch {
+            try {
+                repository.checkAndMarkMissedDoses()
+            } catch (e: Exception) {
+                android.util.Log.e("ScheduleViewModel", "Failed to refresh schedule", e)
+            }
+        }
+    }
+
+    /**
+     * Optional clinical schedule seeder if explicitly called.
      */
     fun seedDemoSchedule() {
         viewModelScope.launch {

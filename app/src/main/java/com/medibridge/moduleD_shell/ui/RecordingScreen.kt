@@ -364,7 +364,7 @@ fun RecordingScreen(
                     Column {
                         Text("Voice Consultation", fontWeight = FontWeight.Bold)
                         Text(
-                            "Sarvam AI · தமிழ் & English Translation",
+                            "Bilingual தமிழ் & English Translation",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -434,7 +434,7 @@ fun RecordingScreen(
                             )
                             Spacer(Modifier.height(2.dp))
                             Text(
-                                text  = "Speak in தமிழ் (Tamil) or English. Sarvam AI transcribes Tamil speech, translates it to English, extracts prescriptions, and checks safety.",
+                                text  = "Speak in தமிழ் (Tamil) or English. The clinical engine transcribes speech, translates it to English, extracts prescriptions, and checks safety.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
                             )
@@ -510,7 +510,7 @@ fun RecordingScreen(
                         Text(
                             text = when {
                                 isRecording  -> "Recording audio... Tap red button to finish"
-                                isProcessing -> "Uploading audio to Sarvam AI & translating..."
+                                isProcessing -> "Uploading audio to backend & translating..."
                                 else         -> "Tap the microphone to begin consultation recording"
                             },
                             style = MaterialTheme.typography.bodySmall,
@@ -833,7 +833,7 @@ private fun UntranslatedRecordingCard(
             if (!audioExists) {
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text  = "⚠ Audio file not found at stored path",
+                    text  = "Audio file not found at stored path",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.error
                 )

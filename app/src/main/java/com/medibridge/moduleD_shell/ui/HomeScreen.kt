@@ -16,12 +16,14 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.*
+import android.content.Context
 import android.Manifest
 import android.content.pm.PackageManager
 import android.media.MediaRecorder
@@ -66,16 +68,18 @@ fun HomeScreen(
     onChatbotClick: () -> Unit,
     onReminderClick: () -> Unit,
     onSafetyClick: () -> Unit = {},
-    onRecordClick: () -> Unit = {}
+    onRecordClick: () -> Unit = {},
+    onOpenDrawer: () -> Unit = {}
 ) {
     var showNotificationPanel by remember { mutableStateOf(false) }
     var showPrivacySheet by remember { mutableStateOf(false) }
     var isCaretakerMode by remember { mutableStateOf(false) }
-    var patientName by remember { mutableStateOf("Mr Tan Ah Kow") }
-    var caretakerPhone by remember { mutableStateOf("+65 9123 4567") }
-    var callStatus by remember { mutableStateOf("Verified") } // "Not Verified", "Verified", "Call Scheduled"
-
     val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("medibridge_prefs", Context.MODE_PRIVATE) }
+    var patientName by remember { mutableStateOf(prefs.getString("patient_name", "My Health Profile") ?: "My Health Profile") }
+    var caretakerPhone by remember { mutableStateOf(prefs.getString("caretaker_phone", "") ?: "") }
+    var callStatus by remember { mutableStateOf("Ready") }
+
     val db = remember { AppDatabase.getInstance(context) }
     val roomMedEntities by db.medicationDao().getAllMedications().collectAsState(initial = emptyList())
     val medications = remember(roomMedEntities) {
@@ -90,12 +94,8 @@ fun HomeScreen(
         topBar = {
             HomeTopBar(
                 isCaretakerMode = isCaretakerMode,
-                onModeToggle = { isCaretakerMode = it },
                 patientName = patientName,
-                isRecording = false,
-                isProcessing = false,
-                onRecordingToggle = onRecordClick,
-                onScannerClick = onScannerClick,
+                onOpenDrawer = onOpenDrawer,
                 onNotificationClick = { showNotificationPanel = !showNotificationPanel },
                 onSafetyClick = onSafetyClick,
                 unreadCount = unreadNotificationCount
@@ -106,19 +106,20 @@ fun HomeScreen(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Secondary smaller icon button stacked above Chatbot FAB
+                // Secondary smaller icon button stacked above Chatbot FAB - Emerald privacy shield
                 SmallFloatingActionButton(
                     onClick = { showPrivacySheet = true },
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                    containerColor = Color(0xFFE8F5E9),
+                    contentColor = Color(0xFF2E7D32)
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Security,
-                        contentDescription = "Privacy Summary"
+                        contentDescription = "Privacy Summary",
+                        modifier = Modifier.size(20.dp)
                     )
                 }
 
-                // Primary FAB: Chatbot ("Medi")
+                // Primary FAB: Chatbot ("Medi AI")
                 ChatbotFab(onClick = onChatbotClick)
             }
         },
@@ -135,9 +136,9 @@ fun HomeScreen(
                 // ── Header banner ─────────────────────────────────────────────
                 item {
                     HomeHeaderBanner(
-                        medicationCount = medications.size,
+                        medications = medications,
                         isCaretakerMode = isCaretakerMode,
-                        patientName = patientName
+                        onToggleMode = { isCaretakerMode = !isCaretakerMode }
                     )
                 }
 
@@ -200,7 +201,7 @@ fun HomeScreen(
                                 )
                                 Spacer(Modifier.height(4.dp))
                                 Text(
-                                    text = "Tap the scanner icon at the top to scan a prescription or pharmacy bill, or tap the mic to record a doctor consultation.",
+                                    text = "Use the Scan tab below to capture or upload a prescription, or use the Record tab to transcribe a doctor consultation in real-time.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -233,20 +234,18 @@ fun HomeScreen(
                     )
                 }
             }
+        }
 
-            // ── Notification dropdown panel ───────────────────────────────────
-            AnimatedVisibility(
-                visible = showNotificationPanel,
-                enter   = slideInVertically() + fadeIn(),
-                exit    = slideOutVertically() + fadeOut(),
-                modifier = Modifier.align(Alignment.TopEnd)
-            ) {
-                NotificationPanel(
-                    db = db,
-                    onDismiss = { showNotificationPanel = false },
-                    onViewAll = { onReminderClick(); showNotificationPanel = false }
-                )
-            }
+        // ── Notification Modal Bottom Sheet ───────────────────────────────────
+        if (showNotificationPanel) {
+            NotificationBottomSheet(
+                db = db,
+                onDismiss = { showNotificationPanel = false },
+                onViewAll = {
+                    showNotificationPanel = false
+                    onReminderClick()
+                }
+            )
         }
 
         // ── Privacy Summary Bottom Sheet ──────────────────────────────────────
@@ -266,114 +265,77 @@ fun HomeScreen(
 @Composable
 private fun HomeTopBar(
     isCaretakerMode: Boolean,
-    onModeToggle: (Boolean) -> Unit,
     patientName: String,
-    isRecording: Boolean,
-    isProcessing: Boolean,
-    onRecordingToggle: () -> Unit,
-    onScannerClick: () -> Unit,
+    onOpenDrawer: () -> Unit,
     onNotificationClick: () -> Unit,
     onSafetyClick: () -> Unit,
     unreadCount: Int = 0
 ) {
     TopAppBar(
-        title = {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                // Mode Toggle Button (Patient Mode / Caretaker Mode)
+        navigationIcon = {
+            IconButton(onClick = onOpenDrawer) {
                 Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.2f),
-                    modifier = Modifier.clickable { onModeToggle(!isCaretakerMode) }
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.15f),
+                    modifier = Modifier.size(38.dp)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
+                    Box(contentAlignment = Alignment.Center) {
                         Icon(
-                            imageVector = if (isCaretakerMode) Icons.Filled.SupervisorAccount else Icons.Filled.Person,
-                            contentDescription = "Mode Toggle",
+                            imageVector = Icons.Filled.Menu,
+                            contentDescription = "Open Navigation Drawer",
                             tint = MaterialTheme.colorScheme.onPrimary,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Text(
-                            text = if (isCaretakerMode) "Caretaker" else "Patient",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onPrimary
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }
-
-                Spacer(Modifier.width(8.dp))
-
-                // Display patient / user name
+            }
+        },
+        title = {
+            Column {
                 Text(
-                    text = patientName,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onPrimary,
+                    text = "MediBridge",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimary
+                )
+                Text(
+                    text = if (isCaretakerMode) "Caretaker View • $patientName" else "Patient • $patientName",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
         },
         actions = {
-            // Audio recording icon button — toggles audio recording state
-            IconButton(onClick = onRecordingToggle) {
-                if (isRecording) {
-                    Icon(
-                        imageVector = Icons.Filled.RadioButtonChecked,
-                        contentDescription = "Stop Recording",
-                        tint = MaterialTheme.colorScheme.error
-                    )
-                } else {
-                    Icon(
-                        imageVector = Icons.Outlined.Mic,
-                        contentDescription = "Audio Recording",
-                        tint = MaterialTheme.colorScheme.onPrimary
-                    )
-                }
-            }
-
-
-            // OCR Scanner icon button — opens Scanner screen
-            IconButton(onClick = onScannerClick) {
-                Icon(
-                    imageVector = Icons.Filled.DocumentScanner,
-                    contentDescription = "Scan Prescription",
-                    tint = MaterialTheme.colorScheme.onPrimary
-                )
-            }
-
-            // Safety / Medication-verification button (Module B)
-            IconButton(onClick = onSafetyClick) {
-                Icon(
-                    imageVector = Icons.Filled.Shield,
-                    contentDescription = "Medication Safety",
-                    tint = MaterialTheme.colorScheme.onPrimary
-                )
-            }
-
-            // Notification / bell icon — badge driven by live unread count from NotificationDao
+            // Notification / bell icon with live badge - Amber badge container
             IconButton(onClick = onNotificationClick) {
                 BadgedBox(
                     badge = {
                         if (unreadCount > 0) {
-                            Badge {
+                            Badge(
+                                containerColor = Color(0xFFD32F2F),
+                                contentColor = Color.White
+                            ) {
                                 Text(if (unreadCount > 9) "9+" else unreadCount.toString())
                             }
                         }
                     }
                 ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Notifications,
-                        contentDescription = "Reminders",
-                        tint = MaterialTheme.colorScheme.onPrimary
-                    )
+                    Surface(
+                        shape = CircleShape,
+                        color = Color(0xFFFFF8E1),
+                        modifier = Modifier.size(38.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Filled.Notifications,
+                                contentDescription = "Alerts & Notifications",
+                                tint = Color(0xFFF57F17),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
                 }
             }
         },
@@ -619,10 +581,14 @@ fun PrivacySummarySheet(
 
 @Composable
 private fun HomeHeaderBanner(
-    medicationCount: Int,
+    medications: List<MedicationObject>,
     isCaretakerMode: Boolean,
-    patientName: String
+    onToggleMode: () -> Unit
 ) {
+    val takenCount = medications.sumOf { med -> med.adherence.count { it.status.equals("taken", ignoreCase = true) } }
+    val pendingCount = medications.sumOf { med -> med.adherence.count { it.status.equals("pending", ignoreCase = true) } }
+    val alertCount = medications.count { it.conflicts.isNotEmpty() }
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -634,23 +600,58 @@ private fun HomeHeaderBanner(
             .padding(horizontal = 20.dp, vertical = 20.dp)
     ) {
         Column {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (isCaretakerMode) "Caretaker Mode Active" else "Patient Health Hub",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f)
+                )
+
+                // Mode toggle pill
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.2f),
+                    modifier = Modifier.clickable { onToggleMode() }
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (isCaretakerMode) Icons.Filled.SupervisorAccount else Icons.Filled.Person,
+                            contentDescription = "Switch Mode",
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = if (isCaretakerMode) "Caretaker View" else "Patient View",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
             Text(
-                text = if (isCaretakerMode) "Caretaker Overview 👋" else "Good morning! 👋",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f)
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = "$medicationCount medicines scheduled today",
+                text = "${medications.size} medicines scheduled today",
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onPrimary
             )
             Spacer(Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                StatChip(label = "✅ 2 Taken")
-                StatChip(label = "⏳ 2 Pending")
-                StatChip(label = "⚠️ 1 Alert")
+                StatChip(label = "$takenCount Taken")
+                StatChip(label = "$pendingCount Pending")
+                if (alertCount > 0) {
+                    StatChip(label = "$alertCount Safety Alert")
+                }
             }
         }
     }
@@ -852,9 +853,9 @@ private enum class MedStatus { VERIFIED, NEEDS_REVIEW, CONFLICT }
 @Composable
 private fun StatusChip(status: MedStatus) {
     val (label, bgColor, textColor) = when (status) {
-        MedStatus.VERIFIED     -> Triple("✓ Verified",    StatusVerifiedBg, StatusVerified)
-        MedStatus.NEEDS_REVIEW -> Triple("⚠ Review",      StatusReviewBg,   StatusReview)
-        MedStatus.CONFLICT     -> Triple("✕ Conflict",    StatusConflictBg, StatusConflict)
+        MedStatus.VERIFIED     -> Triple("Verified",     StatusVerifiedBg, StatusVerified)
+        MedStatus.NEEDS_REVIEW -> Triple("Needs Review", StatusReviewBg,   StatusReview)
+        MedStatus.CONFLICT     -> Triple("Conflict",     StatusConflictBg, StatusConflict)
     }
 
     Surface(
@@ -877,17 +878,31 @@ private fun StatusChip(status: MedStatus) {
 
 @Composable
 private fun ChatbotFab(onClick: () -> Unit) {
+    val infiniteTransition = rememberInfiniteTransition(label = "fabPulse")
+    val fabScale by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.06f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "fabScale"
+    )
+
     ExtendedFloatingActionButton(
-        onClick           = onClick,
-        icon              = {
+        onClick = onClick,
+        modifier = Modifier.scale(fabScale),
+        icon = {
             Icon(
-                imageVector = Icons.Filled.SmartToy,
-                contentDescription = "Medi Chatbot"
+                imageVector = Icons.Filled.AutoAwesome,
+                contentDescription = "Medi Chatbot",
+                tint = Color(0xFFFFD54F), // Radiant gold/amber star
+                modifier = Modifier.size(22.dp)
             )
         },
-        text              = { Text("Medi", fontWeight = FontWeight.SemiBold) },
-        containerColor    = MaterialTheme.colorScheme.primary,
-        contentColor      = MaterialTheme.colorScheme.onPrimary
+        text = { Text("Medi AI", fontWeight = FontWeight.Bold, color = Color.White) },
+        containerColor = Color(0xFF00897B), // Vibrant medical teal
+        contentColor = Color.White
     )
 }
 
@@ -895,8 +910,9 @@ private fun ChatbotFab(onClick: () -> Unit) {
 // Notification Panel (dropdown from bell icon)
 // ─────────────────────────────────────────────────────────────────────────────
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun NotificationPanel(
+private fun NotificationBottomSheet(
     db: AppDatabase,
     onDismiss: () -> Unit,
     onViewAll: () -> Unit
@@ -904,22 +920,20 @@ private fun NotificationPanel(
     val notifications by db.notificationDao().getAllNotifications().collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
 
-    // Mark notifications as read when tray opens
     LaunchedEffect(Unit) {
         db.notificationDao().markAllRead()
     }
 
-    Card(
-        modifier = Modifier
-            .padding(top = 4.dp, end = 8.dp)
-            .width(320.dp)
-            .shadow(12.dp, RoundedCornerShape(16.dp)),
-        shape  = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        )
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = MaterialTheme.colorScheme.surface
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 8.dp)
+        ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -930,39 +944,58 @@ private fun NotificationPanel(
                         imageVector = Icons.Filled.Notifications,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(24.dp)
                     )
-                    Spacer(Modifier.width(6.dp))
+                    Spacer(Modifier.width(10.dp))
                     Text(
-                        text  = "Alerts & Notifications",
-                        style = MaterialTheme.typography.titleSmall,
+                        text = "Alerts & Notifications",
+                        style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
                 }
-                IconButton(onClick = onDismiss, modifier = Modifier.size(24.dp)) {
-                    Icon(
-                        imageVector = Icons.Filled.Close,
-                        contentDescription = "Close",
-                        modifier = Modifier.size(16.dp)
-                    )
+                if (notifications.isNotEmpty()) {
+                    TextButton(onClick = { scope.launch { db.notificationDao().deleteAll() } }) {
+                        Text("Clear All", color = MaterialTheme.colorScheme.error)
+                    }
                 }
             }
-            Spacer(Modifier.height(8.dp))
+
+            Spacer(Modifier.height(10.dp))
             HorizontalDivider()
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(10.dp))
 
             if (notifications.isEmpty()) {
-                Text(
-                    text     = "No alerts. You are on track with your medication schedule!",
-                    style    = MaterialTheme.typography.bodySmall,
-                    color    = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(vertical = 12.dp)
-                )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.CheckCircle,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(40.dp)
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "No active alerts",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "You are on track with your prescribed medication regimen.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
             } else {
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 240.dp)
+                        .heightIn(max = 380.dp)
                 ) {
                     items(notifications, key = { it.id }) { item ->
                         val (icon, tint) = when (item.type) {
@@ -972,57 +1005,56 @@ private fun NotificationPanel(
                             else -> Icons.Filled.Info to MaterialTheme.colorScheme.primary
                         }
 
-                        Row(
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 6.dp),
-                            verticalAlignment = Alignment.Top
+                                .padding(vertical = 4.dp)
                         ) {
-                            Icon(
-                                imageVector = icon,
-                                contentDescription = item.type,
-                                tint = tint,
+                            Row(
                                 modifier = Modifier
-                                    .size(18.dp)
-                                    .padding(top = 2.dp)
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = item.message,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = if (!item.isRead) FontWeight.Bold else FontWeight.Normal,
-                                    color = MaterialTheme.colorScheme.onSurface
+                                    .fillMaxWidth()
+                                    .padding(14.dp),
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = item.type,
+                                    tint = tint,
+                                    modifier = Modifier.size(20.dp)
                                 )
-                                val timeAgo = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(item.timestamp))
-                                Text(
-                                    text = timeAgo,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.outline
-                                )
+                                Spacer(Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = item.message,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = if (!item.isRead) FontWeight.Bold else FontWeight.Normal,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Spacer(Modifier.height(2.dp))
+                                    val timeAgo = SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault()).format(Date(item.timestamp))
+                                    Text(
+                                        text = timeAgo,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.outline
+                                    )
+                                }
                             }
                         }
                     }
                 }
             }
 
-            Spacer(Modifier.height(8.dp))
-            Row(
+            Spacer(Modifier.height(16.dp))
+            Button(
+                onClick = onViewAll,
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                shape = RoundedCornerShape(12.dp)
             ) {
-                if (notifications.isNotEmpty()) {
-                    TextButton(onClick = { scope.launch { db.notificationDao().deleteAll() } }) {
-                        Text("Clear All", style = MaterialTheme.typography.labelSmall)
-                    }
-                } else {
-                    Spacer(Modifier.width(1.dp))
-                }
-                TextButton(onClick = onViewAll) {
-                    Text("View Schedule →", style = MaterialTheme.typography.labelSmall)
-                }
+                Text("View Full Schedule & Reminders")
             }
+            Spacer(Modifier.height(20.dp))
         }
     }
 }

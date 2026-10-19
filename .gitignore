@@ -39,3 +39,4 @@ audio_uploads/
 backend/.venv/
 final_integration/
 mod_integration/
+*.log

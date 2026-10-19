@@ -167,35 +167,35 @@ object BackendClient {
     private const val KEY_BASE_URL = "backend_base_url"
 
     fun init(context: android.content.Context) {
+        try {
+            val prefs = context.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
+            val saved = prefs.getString(KEY_BASE_URL, null)
+            if (!saved.isNullOrBlank()) {
+                currentBaseUrl = if (saved.endsWith("/")) saved else "$saved/"
+                cachedService = null
+                return
+            }
+        } catch (_: Exception) {}
+
         if (AppNetworkConfig.MANUAL_LAPTOP_IP.isNotBlank()) {
             currentBaseUrl = AppNetworkConfig.effectiveBaseUrl
             cachedService = null
             return
         }
-        try {
-            val prefs = context.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
-            val saved = prefs.getString(KEY_BASE_URL, null)
-            if (!saved.isNullOrBlank()) {
-                currentBaseUrl = saved
-                cachedService = null
-            } else {
-                currentBaseUrl = AppNetworkConfig.effectiveBaseUrl
-            }
-        } catch (e: Exception) {
-            currentBaseUrl = AppNetworkConfig.effectiveBaseUrl
-        }
+        currentBaseUrl = AppNetworkConfig.effectiveBaseUrl
     }
 
     fun updateBaseUrl(newUrl: String, context: android.content.Context? = null) {
         val trimmed = newUrl.trim()
         if (trimmed.isNotBlank()) {
-            currentBaseUrl = trimmed
+            val normalized = if (trimmed.endsWith("/")) trimmed else "$trimmed/"
+            currentBaseUrl = normalized
             cachedService = null
             context?.let {
                 try {
                     it.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
                         .edit()
-                        .putString(KEY_BASE_URL, trimmed)
+                        .putString(KEY_BASE_URL, normalized)
                         .apply()
                 } catch (e: Exception) {
                     // Ignore pref write failure

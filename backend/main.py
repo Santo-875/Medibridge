@@ -138,81 +138,45 @@ async def upload_prescription(file: UploadFile = File(...)):
         import numpy as np
 
         image = cv2.imread(str(saved_path))
-        if image is not None:
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-            denoised = cv2.fastNlMeansDenoising(gray, None, 5, 7, 21)
-            clahe = cv2.createCLAHE(clipLimit=1.6, tileGridSize=(8, 8))
-            enhanced = clahe.apply(denoised)
-            ocr_image = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
-            result = ocr.predict(ocr_image)
-            raw_text = reconstruct_ocr_text(result)
+        if image is None:
+            raise HTTPException(status_code=400, detail="Could not decode image for OCR processing.")
+
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        denoised = cv2.fastNlMeansDenoising(gray, None, 5, 7, 21)
+        clahe = cv2.createCLAHE(clipLimit=1.6, tileGridSize=(8, 8))
+        enhanced = clahe.apply(denoised)
+        ocr_image = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
+        result = ocr.predict(ocr_image)
+        raw_text = reconstruct_ocr_text(result)
+        
+        med_lines = extract_medicine_section(raw_text)
+        blocks = reconstruct_medicine_blocks(med_lines)
+        blocks = merge_medicine_blocks(blocks)
+        
+        validated = []
+        for b in blocks:
+            p = parse_medicine_block(b)
+            p["medicine"] = normalize_medicine_text(p["medicine"])
+            p["validation"] = validate_medicine(p["medicine"])
+            validated.append(p)
             
-            med_lines = extract_medicine_section(raw_text)
-            blocks = reconstruct_medicine_blocks(med_lines)
-            blocks = merge_medicine_blocks(blocks)
-            
-            validated = []
-            for b in blocks:
-                p = parse_medicine_block(b)
-                p["medicine"] = normalize_medicine_text(p["medicine"])
-                p["validation"] = validate_medicine(p["medicine"])
-                validated.append(p)
-                
-            if os.environ.get("GROQ_API_KEY"):
-                record = structure_prescription_with_llm(raw_text, validated)
-                return {
-                    "message": "Prescription analyzed successfully",
-                    "filename": file.filename,
-                    "prescription_record": record.model_dump()
-                }
+        if not os.environ.get("GROQ_API_KEY"):
+            raise HTTPException(status_code=500, detail="GROQ_API_KEY is not configured in backend/.env for LLM structuring.")
+
+        record = structure_prescription_with_llm(raw_text, validated)
+        return {
+            "message": "Prescription analyzed successfully",
+            "filename": file.filename,
+            "prescription_record": record.model_dump()
+        }
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"Direct OCR pipeline fallback: {e}")
-
-    # Robust fallback: Generate clinical structured record (Metformin Demo / scanned record)
-    fallback_record = PrescriptionRecord(
-        patient=PatientInfo(),
-        prescription=PrescriptionInfo(),
-        medications=[
-            MedicationItem(
-                medicine="Metformin 500mg Extended Release",
-                normalized_name="Metformin hydrochloride 500 MG Extended Release Oral Tablet",
-                dosage="1 tablet with breakfast",
-                instruction="Take with morning meal with full glass of water",
-                duration_days=30,
-                pqt="30",
-                iqt="30",
-                balance="0",
-                validation=ValidationInfo(
-                    rxcui="861004",
-                    status="HIGH",
-                    reason="Exact RxNorm match verified against national clinical formulary"
-                )
-            ),
-            MedicationItem(
-                medicine="Atorvastatin 20mg",
-                normalized_name="Atorvastatin 20 MG Oral Tablet",
-                dosage="1 tablet at bedtime",
-                instruction="Take before sleep daily",
-                duration_days=30,
-                pqt="30",
-                iqt="30",
-                balance="0",
-                validation=ValidationInfo(
-                    rxcui="259255",
-                    status="HIGH",
-                    reason="Exact RxNorm match"
-                )
-            )
-        ]
-    )
-
-    return {
-        "message": "Prescription processed successfully",
-        "filename": file.filename,
-        "content_type": file.content_type,
-        "size": len(file_bytes),
-        "prescription_record": fallback_record.model_dump()
-    }
+        logging.error(f"[MediBridge] OCR pipeline error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Prescription OCR and analysis failed: {str(e)}"
+        )
 
 # Pharmacy Billing PDF integration endpoint
 @app.post("/api/billing/pdf")
@@ -234,69 +198,41 @@ async def upload_speech(file: UploadFile = File(...)):
     with open(file_path, "wb") as buffer:
         buffer.write(file_bytes)
 
-    transcript = None
-    summary = None
-
     # 1. Transcribe audio to Tamil and translate Tamil to English via Sarvam AI
-    from speech_to_text.sarvam_stt import transcribe_and_translate_audio
-    tamil_text, english_text = transcribe_and_translate_audio(file_path)
+    try:
+        from speech_to_text.sarvam_stt import transcribe_and_translate_audio
+        tamil_text, english_text = transcribe_and_translate_audio(file_path)
+    except Exception as e:
+        logging.error(f"[MediBridge] Speech-to-text failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Audio transcription failed: {str(e)}"
+        )
+
     combined_transcript = f"Tamil: {tamil_text}\n\nEnglish: {english_text}"
 
-    # 2. Generate structured clinical summary via Gemini LLM if configured
-    if os.getenv("GEMINI_API_KEY") and os.getenv("GEMINI_API_KEY") != "your_gemini_api_key_here":
-        try:
-            from speech_to_text.llm_summary import generate_medical_summary
-            summary = generate_medical_summary(english_text)
-            if summary:
-                # Append bilingual note into doctor notes summary
-                summary["doctor_notes_summary"] = f"Tamil: {tamil_text}\nEnglish: {english_text}\n" + (summary.get("doctor_notes_summary") or "")
-        except Exception as e:
-            print(f"Gemini summary generation failed: {e}")
+    # 2. Generate structured clinical summary via Gemini LLM
+    gemini_key = os.getenv("GEMINI_API_KEY", "")
+    if not gemini_key or gemini_key.startswith("your_"):
+        raise HTTPException(
+            status_code=500,
+            detail="GEMINI_API_KEY is not configured in backend/.env for medical summarization."
+        )
 
-    # Fallback realistic clinical summary tailored to patient Mr Tan Ah Kow
-    if not summary:
-        summary = {
-            "chief_complaints": ["Suboptimal BP control (148/92 mmHg)", "Cognitive decline / memory deficit"],
-            "symptoms": ["Occasional morning headache", "Confusion with dates & places", "Needs assistance with bathing/toileting"],
-            "diagnosis": "1. Essential Hypertension & Ischemic Stroke 2. Vascular Dementia (Mental Capacity Impaired)",
-            "medications": [
-                {
-                    "name": "Lisinopril",
-                    "dosage": "10mg",
-                    "frequency": "Once daily (Morning)",
-                    "duration": "90 days",
-                    "instructions": "Tamil: காலையில் உணவுக்குப் பின் | English: Take 1 tablet every morning after breakfast"
-                },
-                {
-                    "name": "Amlodipine",
-                    "dosage": "5mg",
-                    "frequency": "Once daily (Bedtime)",
-                    "duration": "90 days",
-                    "instructions": "Tamil: இரவில் தூங்கும் முன் | English: Take 1 tablet at bedtime"
-                },
-                {
-                    "name": "Donepezil",
-                    "dosage": "5mg",
-                    "frequency": "Once daily (Bedtime)",
-                    "duration": "90 days",
-                    "instructions": "Tamil: இரவில் டோனெபெசில் | English: Memory support. Take at bedtime with caretaker assistance"
-                },
-                {
-                    "name": "Aspirin",
-                    "dosage": "75mg",
-                    "frequency": "Once daily (Lunch)",
-                    "duration": "Ongoing",
-                    "instructions": "Tamil: மதிய உணவுக்குப் பின் | English: Secondary stroke prevention. Take with lunch"
-                }
-            ],
-            "advice_and_precautions": [
-                "Full caretaker oversight required for medication administration (son Mr Tan Ah Beng)",
-                "Monitor blood pressure twice weekly; log readings",
-                "Fall precautions & assistance with bathing/toileting required"
-            ],
-            "follow_up": "In 3 weeks with Dr Tan Ah Moi at Blackacre Hospital",
-            "doctor_notes_summary": f"Tamil: {tamil_text}\nEnglish: {english_text}\nClinical Summary: Patient Mr Tan Ah Kow (55yo). Regimen optimized for BP control and secondary stroke/dementia management."
-        }
+    try:
+        from speech_to_text.llm_summary import generate_medical_summary
+        summary = generate_medical_summary(english_text)
+        if summary:
+            # Append bilingual note into doctor notes summary
+            summary["doctor_notes_summary"] = f"Tamil: {tamil_text}\nEnglish: {english_text}\n" + (summary.get("doctor_notes_summary") or "")
+        else:
+            raise ValueError("Gemini returned empty summary")
+    except Exception as e:
+        logging.error(f"[MediBridge] Gemini summary generation failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Medical summarization failed: {str(e)}"
+        )
 
     return {
         "id": file_id,

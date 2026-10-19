@@ -59,6 +59,7 @@ sealed class ScannerUiState {
     object Camera : ScannerUiState()
     data class Analyzing(val status: String = "Analyzing prescription or bill...") : ScannerUiState()
     data class Review(val items: List<MedicationIngestionPipeline.PipelineResultItem>) : ScannerUiState()
+    data class Error(val message: String) : ScannerUiState()
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -92,22 +93,26 @@ fun ScannerScreen(onBack: () -> Unit) {
     ) { uri: Uri? ->
         if (uri != null) {
             scope.launch {
-                uiState = ScannerUiState.Analyzing("Reading document file (Image / PDF)...")
-                val isPdf = uri.toString().contains(".pdf", ignoreCase = true) ||
-                        context.contentResolver.getType(uri)?.contains("pdf", ignoreCase = true) == true
+                try {
+                    uiState = ScannerUiState.Analyzing("Reading document file (Image / PDF)...")
+                    val isPdf = uri.toString().contains(".pdf", ignoreCase = true) ||
+                            context.contentResolver.getType(uri)?.contains("pdf", ignoreCase = true) == true
 
-                val tempFile = copyUriToTempFile(context, uri, isPdf)
-                val fileToProcess = if (isPdf) {
-                    uiState = ScannerUiState.Analyzing("Rendering PDF page to image before OCR...")
-                    val renderedImage = renderPdfFirstPageToBitmap(context, tempFile)
-                    renderedImage ?: tempFile
-                } else {
-                    tempFile
+                    val tempFile = copyUriToTempFile(context, uri, isPdf)
+                    val fileToProcess = if (isPdf) {
+                        uiState = ScannerUiState.Analyzing("Rendering PDF page to image before OCR...")
+                        val renderedImage = renderPdfFirstPageToBitmap(context, tempFile)
+                        renderedImage ?: tempFile
+                    } else {
+                        tempFile
+                    }
+
+                    uiState = ScannerUiState.Analyzing("Extracting prescription items with AI...")
+                    val pipelineResults = processDocumentAndPipeline(context, fileToProcess)
+                    uiState = ScannerUiState.Review(pipelineResults)
+                } catch (e: Exception) {
+                    uiState = ScannerUiState.Error(e.message ?: "Failed to process prescription image.")
                 }
-
-                uiState = ScannerUiState.Analyzing("Extracting prescription items with AI...")
-                val pipelineResults = processDocumentAndPipeline(context, fileToProcess)
-                uiState = ScannerUiState.Review(pipelineResults)
             }
         }
     }
@@ -235,26 +240,22 @@ fun ScannerScreen(onBack: () -> Unit) {
                                                 object : ImageCapture.OnImageSavedCallback {
                                                     override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                                                         scope.launch {
-                                                            uiState = ScannerUiState.Analyzing("Extracting prescription items with OCR & AI...")
-                                                            val pipelineResults = processDocumentAndPipeline(context, photoFile)
-                                                            uiState = ScannerUiState.Review(pipelineResults)
+                                                            try {
+                                                                uiState = ScannerUiState.Analyzing("Extracting prescription items with OCR & AI...")
+                                                                val pipelineResults = processDocumentAndPipeline(context, photoFile)
+                                                                uiState = ScannerUiState.Review(pipelineResults)
+                                                            } catch (e: Exception) {
+                                                                uiState = ScannerUiState.Error(e.message ?: "Failed to process captured photo.")
+                                                            }
                                                         }
                                                     }
 
                                                     override fun onError(exception: ImageCaptureException) {
-                                                        Log.w("ScannerScreen", "Photo capture failed, falling back", exception)
-                                                        scope.launch {
-                                                            val pipelineResults = processDocumentAndPipeline(context, null)
-                                                            uiState = ScannerUiState.Review(pipelineResults)
-                                                        }
+                                                        Log.e("ScannerScreen", "Photo capture failed", exception)
+                                                        uiState = ScannerUiState.Error("Photo capture failed: ${exception.message}")
                                                     }
                                                 }
                                             )
-                                        } else {
-                                            scope.launch {
-                                                val pipelineResults = processDocumentAndPipeline(context, null)
-                                                uiState = ScannerUiState.Review(pipelineResults)
-                                            }
                                         }
                                     },
                                     containerColor = MaterialTheme.colorScheme.primary,
@@ -266,27 +267,6 @@ fun ScannerScreen(onBack: () -> Unit) {
                                         contentDescription = "Capture",
                                         tint = Color.White,
                                         modifier = Modifier.size(36.dp)
-                                    )
-                                }
-
-                                // Quick demo simulation button (Diabetes scenario)
-                                IconButton(
-                                    onClick = {
-                                        scope.launch {
-                                            uiState = ScannerUiState.Analyzing("Simulating Metformin prescription scan...")
-                                            kotlinx.coroutines.delay(600)
-                                            val pipelineResults = processDocumentAndPipeline(context, null)
-                                            uiState = ScannerUiState.Review(pipelineResults)
-                                        }
-                                    },
-                                    modifier = Modifier
-                                        .size(50.dp)
-                                        .background(Color.White.copy(alpha = 0.2f), CircleShape)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Filled.AutoFixHigh,
-                                        contentDescription = "Demo Extraction",
-                                        tint = Color.White
                                     )
                                 }
                             }
@@ -365,6 +345,45 @@ fun ScannerScreen(onBack: () -> Unit) {
                             }
                         }
                     )
+                }
+
+                is ScannerUiState.Error -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.ErrorOutline,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(56.dp)
+                        )
+                        Spacer(Modifier.height(16.dp))
+                        Text(
+                            text = "Prescription Processing Failed",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = state.message,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Spacer(Modifier.height(24.dp))
+                        Button(
+                            onClick = { uiState = ScannerUiState.Camera }
+                        ) {
+                            Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Try Again")
+                        }
+                    }
                 }
             }
         }
@@ -457,7 +476,7 @@ private fun UnifiedReviewContent(
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Text(
-                                    text = "⚠️ ${eval.headline}: ${eval.summary}",
+                                    text = "Alert: ${eval.headline} - ${eval.summary}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onErrorContainer,
                                     modifier = Modifier.padding(8.dp)
@@ -579,39 +598,17 @@ private suspend fun processDocumentAndPipeline(
                     BackendClient.mapPrescriptionItemToObject(apiMed, record.prescription?.remarks)
                 }
                 candidateMeds.addAll(mapped)
+            } else {
+                throw IllegalStateException("No medications could be extracted from this document. Please ensure the prescription text is sharp and well-lit.")
             }
         } catch (e: Exception) {
-            Log.w("ScannerScreen", "Backend call failed: ${e.message}, applying clinical demo item")
+            Log.e("ScannerScreen", "Prescription OCR processing error: ${e.message}", e)
+            throw e
         }
     }
 
     if (candidateMeds.isEmpty()) {
-        // Fallback demo medication: Metformin 500mg
-        candidateMeds.add(
-            MedicationObject(
-                id = UUID.randomUUID().toString(),
-                name = "Metformin 500mg",
-                strength = "500mg",
-                dose = "1 tablet",
-                frequency = "Once daily (Morning)",
-                timing = "Take with breakfast",
-                duration = "30 days",
-                confidence = 0.95f,
-                needsVerification = false,
-                verifiedByUser = true,
-                crossVerified = true,
-                conflicts = emptyList(),
-                reviewRecommended = false,
-                schedule = listOf(
-                    ScheduleSlot(time = "08:00", slot = "Morning", withFood = true)
-                ),
-                adherence = emptyList(),
-                summary = "Prescribed: Metformin 500mg. Take with breakfast",
-                sideEffects = listOf("Mild nausea", "Stomach upset"),
-                visibleTo = listOf("patient", "caregiver", "doctor"),
-                sourceType = "bill"
-            )
-        )
+        throw IllegalStateException("No valid medications found to review.")
     }
 
     // Run end-to-end normalization & safety evaluation pipeline!

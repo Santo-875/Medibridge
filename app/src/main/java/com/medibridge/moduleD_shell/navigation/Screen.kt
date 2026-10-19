@@ -13,17 +13,13 @@ package com.medibridge.moduleD_shell.navigation
 sealed class Screen(val route: String) {
 
     // ── Module D: Shell (always present) ─────────────────────────────────────
+    object Intro       : Screen("intro")         // Launch motion graphics intro screen
     object Home        : Screen("home")
-    object Recording   : Screen("recording")
-    object Reminders   : Screen("reminders")
-    object Settings    : Screen("settings")
-    object Chatbot     : Screen("chatbot")       // Opens from Home FAB
-    object Scanner     : Screen("scanner")       // Opens from Home top-bar prescription/bill scanner icon
-
-    // ── Module A: Prescription (add more as Module A expands) ─────────────────
-    // object PrescriptionDetail : Screen("prescription_detail/{medId}") {
-    //     fun createRoute(medId: String) = "prescription_detail/$medId"
-    // }
+    object Scanner     : Screen("scanner")       // Dedicated Scan tab
+    object Recording   : Screen("recording")     // Dedicated Record tab
+    object Chatbot     : Screen("chatbot")       // Dedicated Medi AI tab
+    object Reminders   : Screen("reminders")     // Accessible from Home or schedule details
+    object Settings    : Screen("settings")      // Clean Settings tab
 
     // ── Module B: Safety ─────────────────────────────────────────────────────
     object SafetyDashboard : Screen("safety_dashboard")
@@ -31,24 +27,21 @@ sealed class Screen(val route: String) {
     // ── Module C: Schedule ─────────────────────────────────────────────────────
     /** Add/Edit a medication. Optional param ?medId=<id> for edit mode. */
     object AddEditMedication : Screen("add_edit_medication")
-
-    // ── Module D: Shell add-ons ────────────────────────────────────────────────
-    // object ScheduleCalendar : Screen("schedule_calendar")
 }
 
 /** Items shown in the bottom navigation bar (top-level destinations only). */
 sealed class BottomNavItem(
     val screen: Screen,
     val label: String,
-    // Icon resource names — using Material Icons Extended (referenced in composable)
     val iconName: String
 ) {
     object Home      : BottomNavItem(Screen.Home,      "Home",      "Home")
+    object Scanner   : BottomNavItem(Screen.Scanner,   "Scan",      "DocumentScanner")
     object Recording : BottomNavItem(Screen.Recording, "Record",    "Mic")
-    object Reminders : BottomNavItem(Screen.Reminders, "Reminders", "Notifications")
+    object Chatbot   : BottomNavItem(Screen.Chatbot,   "Medi AI",   "AutoAwesome")
     object Settings  : BottomNavItem(Screen.Settings,  "Settings",  "Settings")
 
     companion object {
-        val all = listOf(Home, Recording, Reminders, Settings)
+        val all = listOf(Home, Scanner, Recording, Chatbot, Settings)
     }
 }
