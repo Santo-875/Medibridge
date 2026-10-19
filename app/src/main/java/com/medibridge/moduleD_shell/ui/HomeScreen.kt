@@ -19,6 +19,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.*
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -158,15 +159,52 @@ fun HomeScreen(
                     }
                 }
 
-                // ── Section label ─────────────────────────────────────────────
+                // ── Section label (Spacious Rhythm & Eyebrow Tag) ──────────────
                 item {
-                    Text(
-                        text = if (isCaretakerMode) "$patientName's Medications" else "Your Medications",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 8.dp)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                        ) {
+                            Text(
+                                text = "ACTIVE REGIMEN",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.1.sp,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                            )
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (isCaretakerMode) "$patientName's Medications" else "Daily Prescriptions",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.surfaceVariant
+                            ) {
+                                Text(
+                                    text = "${medications.size} Total",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                                )
+                            }
+                        }
+                    }
                 }
 
                 // ── Empty State if no medications ────────────────────────────
@@ -589,68 +627,143 @@ private fun HomeHeaderBanner(
     val pendingCount = medications.sumOf { med -> med.adherence.count { it.status.equals("pending", ignoreCase = true) } }
     val alertCount = medications.count { it.conflicts.isNotEmpty() }
 
+    // ── Taste-Skill Double-Bezel (Doppelrand) Architecture ─────────────────────
+    // Outer Shell: hairline outer ring + generous radius + concentric inner offset
     Box(
         modifier = Modifier
             .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp)
             .background(
-                brush = Brush.horizontalGradient(
-                    colors = listOf(GradientStart, GradientEnd)
-                )
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
+                shape = RoundedCornerShape(26.dp)
             )
-            .padding(horizontal = 20.dp, vertical = 20.dp)
+            .border(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.20f),
+                shape = RoundedCornerShape(26.dp)
+            )
+            .padding(4.dp)
     ) {
-        Column {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+        // Inner Core: Concentric surface with subtle gradient & ambient lighting
+        Surface(
+            shape = RoundedCornerShape(22.dp),
+            color = Color.Transparent,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        brush = Brush.linearGradient(
+                            colors = listOf(
+                                Color(0xFF0F766E), // Deep Teal Core
+                                Color(0xFF0D9488)  // Vibrant Clinical Teal
+                            )
+                        )
+                    )
+                    .padding(20.dp)
             ) {
-                Text(
-                    text = if (isCaretakerMode) "Caretaker Mode Active" else "Patient Health Hub",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f)
-                )
-
-                // Mode toggle pill
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.2f),
-                    modifier = Modifier.clickable { onToggleMode() }
-                ) {
+                Column {
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = if (isCaretakerMode) Icons.Filled.SupervisorAccount else Icons.Filled.Person,
-                            contentDescription = "Switch Mode",
-                            tint = MaterialTheme.colorScheme.onPrimary,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            text = if (isCaretakerMode) "Caretaker View" else "Patient View",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onPrimary
-                        )
+                        // Micro-Eyebrow Tag
+                        Surface(
+                            shape = CircleShape,
+                            color = Color.White.copy(alpha = 0.16f)
+                        ) {
+                            Text(
+                                text = if (isCaretakerMode) "CARETAKER CONSOLE" else "PATIENT HEALTH DOSSIER",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.2.sp,
+                                color = Color.White,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
+
+                        // Button-in-Button Mode Switch Pill
+                        Surface(
+                            shape = CircleShape,
+                            color = Color.White.copy(alpha = 0.22f),
+                            modifier = Modifier.clickable { onToggleMode() }
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(start = 4.dp, end = 12.dp, top = 4.dp, bottom = 4.dp)
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = Color.White,
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = if (isCaretakerMode) Icons.Filled.SupervisorAccount else Icons.Filled.Person,
+                                            contentDescription = "Switch Mode",
+                                            tint = Color(0xFF0F766E),
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = if (isCaretakerMode) "Caretaker View" else "Patient View",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                            }
+                        }
                     }
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = "${medications.size} medicines scheduled today",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onPrimary
-            )
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                StatChip(label = "$takenCount Taken")
-                StatChip(label = "$pendingCount Pending")
-                if (alertCount > 0) {
-                    StatChip(label = "$alertCount Safety Alert")
+
+                    Spacer(Modifier.height(14.dp))
+
+                    Text(
+                        text = "${medications.size} medications scheduled today",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+
+                    Spacer(Modifier.height(16.dp))
+
+                    // Spot Pastel Bento Metric Pills
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        PastelStatPill(
+                            label = "$takenCount Taken",
+                            icon = Icons.Filled.CheckCircle,
+                            bgColor = Color(0xFFE8F5E9),
+                            textColor = Color(0xFF1B5E20),
+                            iconColor = Color(0xFF2E7D32),
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        PastelStatPill(
+                            label = "$pendingCount Pending",
+                            icon = Icons.Filled.Schedule,
+                            bgColor = Color(0xFFE3F2FD),
+                            textColor = Color(0xFF0D47A1),
+                            iconColor = Color(0xFF1976D2),
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        if (alertCount > 0) {
+                            PastelStatPill(
+                                label = "$alertCount Alert",
+                                icon = Icons.Filled.Warning,
+                                bgColor = Color(0xFFFFEBEE),
+                                textColor = Color(0xFFB71C1C),
+                                iconColor = Color(0xFFD32F2F),
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -658,22 +771,44 @@ private fun HomeHeaderBanner(
 }
 
 @Composable
-private fun StatChip(label: String) {
+private fun PastelStatPill(
+    label: String,
+    icon: ImageVector,
+    bgColor: Color,
+    textColor: Color,
+    iconColor: Color,
+    modifier: Modifier = Modifier
+) {
     Surface(
-        shape  = RoundedCornerShape(20.dp),
-        color  = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.18f)
+        shape = RoundedCornerShape(14.dp),
+        color = bgColor,
+        modifier = modifier
     ) {
-        Text(
-            text  = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onPrimary,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = iconColor,
+                modifier = Modifier.size(14.dp)
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = textColor,
+                maxLines = 1
+            )
+        }
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Medication Card (Schedule Card)
+// Medication Card (Double-Bezel Architecture + Button-in-Button CTAs)
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
@@ -689,129 +824,185 @@ fun MedicationCard(
         else -> MedStatus.VERIFIED
     }
 
-    Card(
+    // Double-Bezel: Outer machined frame
+    Box(
         modifier = modifier
-            .shadow(4.dp, RoundedCornerShape(16.dp)),
-        shape  = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        )
+            .background(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                shape = RoundedCornerShape(22.dp)
+            )
+            .border(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.14f),
+                shape = RoundedCornerShape(22.dp)
+            )
+            .padding(4.dp)
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // ── Medicine image (circular) ─────────────────────────────────
-                MedicineImage(imageUrl = medication.imageUrl)
+        // Inner Core: Elevated card surface
+        Surface(
+            shape = RoundedCornerShape(18.dp),
+            color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 2.dp,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Medicine image
+                    MedicineImage(imageUrl = medication.imageUrl)
 
-                Spacer(Modifier.width(14.dp))
+                    Spacer(Modifier.width(14.dp))
 
-                // ── Details ───────────────────────────────────────────────────
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.Top
-                    ) {
-                        Text(
-                            text     = medication.name,
-                            style    = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color    = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.weight(1f)
-                        )
-                        StatusChip(status = status)
-                    }
-
-                    Spacer(Modifier.height(4.dp))
-
-                    // Dose · Strength · Timing
-                    Text(
-                        text  = "${medication.dose} · ${medication.strength} · ${medication.timing}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-
-                    Spacer(Modifier.height(6.dp))
-
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // Duration badge
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer
+                    // Details
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.Top
                         ) {
                             Text(
-                                text  = medication.duration,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                text = medication.name,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f)
                             )
+                            StatusChip(status = status)
                         }
 
-                        // Frequency
+                        Spacer(Modifier.height(4.dp))
+
+                        // Dose · Strength · Timing
                         Text(
-                            text  = medication.frequency,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            text = "${medication.dose} · ${medication.strength} · ${medication.timing}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
-                    }
 
-                    // Conflict warning — Module B populates this
-                    if (medication.conflicts.isNotEmpty()) {
-                        Spacer(Modifier.height(6.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Filled.Warning,
-                                contentDescription = "Conflict",
-                                tint   = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(Modifier.width(4.dp))
+                        Spacer(Modifier.height(8.dp))
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Duration pill tag
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer
+                            ) {
+                                Text(
+                                    text = medication.duration,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
+                            }
+
+                            // Frequency
                             Text(
-                                text  = medication.conflicts.first().detail,
+                                text = medication.frequency,
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.error,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                        }
+
+                        // Conflict warning — Module B populates this
+                        if (medication.conflicts.isNotEmpty()) {
+                            Spacer(Modifier.height(6.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Filled.Warning,
+                                    contentDescription = "Conflict",
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    text = medication.conflicts.first().detail,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
                     }
                 }
-            }
 
-            Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(14.dp))
 
-            // Schedule Action Buttons: Taken / Snooze — wired to ScheduleViewModel via callbacks
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                FilledTonalButton(
-                    onClick = onTaken,
-                    colors = ButtonDefaults.filledTonalButtonColors(
-                        containerColor = StatusVerifiedBg,
-                        contentColor = StatusVerified
-                    ),
-                    modifier = Modifier.weight(1f)
+                // Button-in-Button Schedule Action Buttons: Taken / Snooze
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Taken", style = MaterialTheme.typography.labelMedium)
-                }
+                    // Island CTA: Taken with circular icon wrapper
+                    Button(
+                        onClick = onTaken,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = StatusVerified,
+                            contentColor = Color.White
+                        ),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = Color.White.copy(alpha = 0.22f),
+                                modifier = Modifier.size(20.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Check,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            Text("Taken", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
 
-                OutlinedButton(
-                    onClick = onSnooze,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(Icons.Filled.Snooze, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Snooze 15m", style = MaterialTheme.typography.labelMedium)
+                    // Island CTA: Snooze with circular icon wrapper
+                    OutlinedButton(
+                        onClick = onSnooze,
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.12f),
+                                modifier = Modifier.size(20.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Snooze,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            Text("Snooze 15m", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
                 }
             }
         }

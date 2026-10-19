@@ -5,6 +5,7 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
@@ -352,132 +353,164 @@ private fun AdherenceProgressCard(
         label = "adherenceBar"
     )
 
-    Card(
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-        modifier = Modifier.fillMaxWidth()
+    // ── Taste-Skill Double-Bezel Architecture ──────────────────────────────────
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
+                shape = RoundedCornerShape(26.dp)
+            )
+            .border(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
+                shape = RoundedCornerShape(26.dp)
+            )
+            .padding(4.dp)
     ) {
-        Column(modifier = Modifier.padding(18.dp)) {
-            // Header row with Adherence Badge
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Surface(
-                        shape = CircleShape,
-                        color = Color(0xFFE8F5E9),
-                        modifier = Modifier.size(36.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Filled.CheckCircle,
-                                contentDescription = null,
-                                tint = Color(0xFF2E7D32),
-                                modifier = Modifier.size(20.dp)
+        Surface(
+            shape = RoundedCornerShape(22.dp),
+            color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 2.dp,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(18.dp)) {
+                // Micro-Eyebrow Tag
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                ) {
+                    Text(
+                        text = "DAILY REGIMEN ADHERENCE",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.1.sp,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                    )
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                // Header row with Adherence Badge
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            shape = CircleShape,
+                            color = Color(0xFFE8F5E9),
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Filled.CheckCircle,
+                                    contentDescription = null,
+                                    tint = Color(0xFF2E7D32),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = "Daily Compliance",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "$takenCount of $totalDoses doses completed",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
-                    Spacer(Modifier.width(10.dp))
-                    Column {
+
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (adherencePercent >= 80) Color(0xFFE8F5E9) else Color(0xFFFFF3E0)
+                    ) {
                         Text(
-                            text = "Daily Adherence",
+                            text = "$adherencePercent%",
                             style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "$takenCount of $totalDoses doses completed",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            fontWeight = FontWeight.ExtraBold,
+                            color = if (adherencePercent >= 80) Color(0xFF2E7D32) else Color(0xFFE65100),
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                         )
                     }
                 }
 
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = if (adherencePercent >= 80) Color(0xFFE8F5E9) else Color(0xFFFFF3E0)
+                Spacer(Modifier.height(14.dp))
+
+                // Progress Bar
+                LinearProgressIndicator(
+                    progress = { animatedProgress },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(8.dp),
+                    color = Color(0xFF2E7D32),
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+
+                Spacer(Modifier.height(16.dp))
+
+                // 3 Spot Pastel Bento Stat Pills (Taken, Pending, Missed)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(
-                        text = "$adherencePercent%",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = if (adherencePercent >= 80) Color(0xFF2E7D32) else Color(0xFFE65100),
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    StatPill(
+                        label = "Taken",
+                        count = takenCount,
+                        icon = Icons.Filled.Check,
+                        containerColor = Color(0xFFE8F5E9),
+                        contentColor = Color(0xFF2E7D32),
+                        modifier = Modifier.weight(1f)
+                    )
+                    StatPill(
+                        label = "Pending",
+                        count = pendingCount,
+                        icon = Icons.Filled.Schedule,
+                        containerColor = Color(0xFFFFF8E1),
+                        contentColor = Color(0xFFE65100),
+                        modifier = Modifier.weight(1f)
+                    )
+                    StatPill(
+                        label = "Missed",
+                        count = missedCount,
+                        icon = Icons.Filled.Close,
+                        containerColor = Color(0xFFFFEBEE),
+                        contentColor = Color(0xFFC62828),
+                        modifier = Modifier.weight(1f)
                     )
                 }
-            }
 
-            Spacer(Modifier.height(14.dp))
-
-            // Progress Bar
-            LinearProgressIndicator(
-                progress = { animatedProgress },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(8.dp),
-                color = Color(0xFF2E7D32),
-                trackColor = MaterialTheme.colorScheme.surfaceVariant
-            )
-
-            Spacer(Modifier.height(16.dp))
-
-            // 3 Stat Pills (Taken, Pending, Missed)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                StatPill(
-                    label = "Taken",
-                    count = takenCount,
-                    icon = Icons.Filled.Check,
-                    containerColor = Color(0xFFE8F5E9),
-                    contentColor = Color(0xFF2E7D32),
-                    modifier = Modifier.weight(1f)
-                )
-                StatPill(
-                    label = "Pending",
-                    count = pendingCount,
-                    icon = Icons.Filled.Schedule,
-                    containerColor = Color(0xFFFFF8E1),
-                    contentColor = Color(0xFFE65100),
-                    modifier = Modifier.weight(1f)
-                )
-                StatPill(
-                    label = "Missed",
-                    count = missedCount,
-                    icon = Icons.Filled.Close,
-                    containerColor = Color(0xFFFFEBEE),
-                    contentColor = Color(0xFFC62828),
-                    modifier = Modifier.weight(1f)
-                )
-            }
-
-            if (caretakerPhone.isNotBlank()) {
-                Spacer(Modifier.height(14.dp))
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                if (caretakerPhone.isNotBlank()) {
+                    Spacer(Modifier.height(14.dp))
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(
-                            imageVector = Icons.Filled.Security,
-                            contentDescription = null,
-                            tint = Color(0xFF1E88E5),
-                            modifier = Modifier.size(15.dp)
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = "Auto-Escalation Link Active: $caretakerPhone",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Security,
+                                contentDescription = null,
+                                tint = Color(0xFF1E88E5),
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = "Auto-Escalation Link Active: $caretakerPhone",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }
@@ -715,34 +748,64 @@ private fun ReminderCard(
 
             Spacer(Modifier.height(12.dp))
 
-            // ── ACTION BUTTONS ────────────────────────────────────────────────
+            // ── ACTION BUTTONS (Taste-Skill Button-in-Button CTAs) ───────────
             when (reminder.status) {
                 ReminderStatus.PENDING -> {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        // Mark Taken Button (Primary Emerald)
+                        // Mark Taken Button with nested circular icon wrapper
                         Button(
                             onClick = onTaken,
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
-                            shape = RoundedCornerShape(10.dp),
+                            shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.weight(1.3f)
                         ) {
-                            Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Mark Taken", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = Color.White.copy(alpha = 0.22f),
+                                    modifier = Modifier.size(20.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Check,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(Modifier.width(6.dp))
+                                Text("Mark Taken", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                            }
                         }
 
-                        // Snooze Button (+15m)
+                        // Snooze Button with nested circular icon wrapper
                         OutlinedButton(
                             onClick = onSnooze,
-                            shape = RoundedCornerShape(10.dp),
+                            shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Icon(Icons.Filled.Snooze, contentDescription = null, modifier = Modifier.size(15.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Snooze", style = MaterialTheme.typography.labelMedium)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.12f),
+                                    modifier = Modifier.size(20.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Snooze,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(Modifier.width(4.dp))
+                                Text("Snooze", style = MaterialTheme.typography.labelMedium)
+                            }
                         }
 
                         // Missed / Skip Button
@@ -750,7 +813,7 @@ private fun ReminderCard(
                             onClick = onMissed,
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFC62828)),
                             border = BorderStroke(1.dp, Color(0xFFEF9A9A)),
-                            shape = RoundedCornerShape(10.dp),
+                            shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.weight(0.9f)
                         ) {
                             Text("Skip", style = MaterialTheme.typography.labelMedium)

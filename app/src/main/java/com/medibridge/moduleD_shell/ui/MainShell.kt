@@ -4,6 +4,9 @@ import android.content.Context
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -22,6 +25,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
@@ -79,86 +83,106 @@ fun MainShell(
         Scaffold(
             bottomBar = {
                 if (showBottomNav) {
-                    NavigationBar(
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        tonalElevation = 8.dp
+                    // ── Taste-Skill Floating Island Bottom Bar ─────────────────
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .navigationBarsPadding()
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
                     ) {
-                        BottomNavItem.all.forEach { item ->
-                            val isSelected = currentDest?.hierarchy?.any {
-                                it.route == item.screen.route
-                            } == true
+                        Surface(
+                            shape = RoundedCornerShape(26.dp),
+                            color = MaterialTheme.colorScheme.surface,
+                            shadowElevation = 8.dp,
+                            border = BorderStroke(
+                                1.dp,
+                                MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            NavigationBar(
+                                containerColor = Color.Transparent,
+                                tonalElevation = 0.dp,
+                                modifier = Modifier.height(68.dp)
+                            ) {
+                                BottomNavItem.all.forEach { item ->
+                                    val isSelected = currentDest?.hierarchy?.any {
+                                        it.route == item.screen.route
+                                    } == true
 
-                            // Distinct vibrant color palette per feature
-                            val (activeColor, activeContainer) = when (item) {
-                                BottomNavItem.Home -> Color(0xFF1E88E5) to Color(0xFFE3F2FD)       // Medical Blue
-                                BottomNavItem.Scanner -> Color(0xFF8E24AA) to Color(0xFFF3E5F5)    // Vibrant Purple
-                                BottomNavItem.Recording -> Color(0xFFE53935) to Color(0xFFFFEBEE)  // Coral Red
-                                BottomNavItem.Chatbot -> Color(0xFF00897B) to Color(0xFFE0F2F1)    // Emerald Teal
-                                BottomNavItem.Settings -> Color(0xFF3949AB) to Color(0xFFE8EAF6)   // Slate Indigo
-                            }
+                                    // Distinct vibrant color palette per feature
+                                    val (activeColor, activeContainer) = when (item) {
+                                        BottomNavItem.Home -> Color(0xFF1E88E5) to Color(0xFFE3F2FD)       // Medical Blue
+                                        BottomNavItem.Scanner -> Color(0xFF8E24AA) to Color(0xFFF3E5F5)    // Vibrant Purple
+                                        BottomNavItem.Recording -> Color(0xFFE53935) to Color(0xFFFFEBEE)  // Coral Red
+                                        BottomNavItem.Chatbot -> Color(0xFF00897B) to Color(0xFFE0F2F1)    // Emerald Teal
+                                        BottomNavItem.Settings -> Color(0xFF3949AB) to Color(0xFFE8EAF6)   // Slate Indigo
+                                    }
 
-                            val scale by animateFloatAsState(
-                                targetValue = if (isSelected) 1.15f else 1.0f,
-                                animationSpec = spring(
-                                    dampingRatio = Spring.DampingRatioMediumBouncy,
-                                    stiffness = Spring.StiffnessLow
-                                ),
-                                label = "bottomIconScale"
-                            )
-
-                            NavigationBarItem(
-                                selected = isSelected,
-                                onClick = {
-                                    navController.navigate(item.screen.route) {
-                                        popUpTo(navController.graph.findStartDestination().id) {
-                                            saveState = true
-                                        }
-                                        launchSingleTop = true
-                                        restoreState = true
-                                    }
-                                },
-                                icon = {
-                                    val iconVector: ImageVector = when (item) {
-                                        BottomNavItem.Home -> Icons.Filled.Home
-                                        BottomNavItem.Scanner -> Icons.Filled.DocumentScanner
-                                        BottomNavItem.Recording -> Icons.Filled.Mic
-                                        BottomNavItem.Chatbot -> Icons.Filled.AutoAwesome
-                                        BottomNavItem.Settings -> Icons.Filled.Settings
-                                    }
-                                    Surface(
-                                        shape = RoundedCornerShape(12.dp),
-                                        color = if (isSelected) activeContainer else Color.Transparent,
-                                        modifier = Modifier.scale(scale)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = iconVector,
-                                                contentDescription = item.label,
-                                                tint = if (isSelected) activeColor else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                                modifier = Modifier.size(22.dp)
-                                            )
-                                        }
-                                    }
-                                },
-                                label = {
-                                    Text(
-                                        text = item.label,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                        color = if (isSelected) activeColor else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                                        style = MaterialTheme.typography.labelSmall
+                                    val scale by animateFloatAsState(
+                                        targetValue = if (isSelected) 1.15f else 1.0f,
+                                        animationSpec = spring(
+                                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                                            stiffness = Spring.StiffnessLow
+                                        ),
+                                        label = "bottomIconScale"
                                     )
-                                },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = activeColor,
-                                    selectedTextColor = activeColor,
-                                    indicatorColor = Color.Transparent,
-                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
-                                )
-                            )
+
+                                    NavigationBarItem(
+                                        selected = isSelected,
+                                        onClick = {
+                                            navController.navigate(item.screen.route) {
+                                                popUpTo(navController.graph.findStartDestination().id) {
+                                                    saveState = true
+                                                }
+                                                launchSingleTop = true
+                                                restoreState = true
+                                            }
+                                        },
+                                        icon = {
+                                            val iconVector: ImageVector = when (item) {
+                                                BottomNavItem.Home -> Icons.Filled.Home
+                                                BottomNavItem.Scanner -> Icons.Filled.DocumentScanner
+                                                BottomNavItem.Recording -> Icons.Filled.Mic
+                                                BottomNavItem.Chatbot -> Icons.Filled.AutoAwesome
+                                                BottomNavItem.Settings -> Icons.Filled.Settings
+                                            }
+                                            Surface(
+                                                shape = RoundedCornerShape(12.dp),
+                                                color = if (isSelected) activeContainer else Color.Transparent,
+                                                modifier = Modifier.scale(scale)
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(
+                                                        imageVector = iconVector,
+                                                        contentDescription = item.label,
+                                                        tint = if (isSelected) activeColor else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                                        modifier = Modifier.size(22.dp)
+                                                    )
+                                                }
+                                            }
+                                        },
+                                        label = {
+                                            Text(
+                                                text = item.label,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                color = if (isSelected) activeColor else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                                                style = MaterialTheme.typography.labelSmall
+                                            )
+                                        },
+                                        colors = NavigationBarItemDefaults.colors(
+                                            selectedIconColor = activeColor,
+                                            selectedTextColor = activeColor,
+                                            indicatorColor = Color.Transparent,
+                                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                                        )
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -194,60 +218,78 @@ private fun DrawerSidebarContent(
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
     ) {
-        // ── Header: Account & Profile Enclave ────────────────────────────────
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            color = MaterialTheme.colorScheme.primaryContainer
-        ) {
-            Column(
-                modifier = Modifier.padding(20.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(50.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Filled.Person,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onPrimary,
-                                modifier = Modifier.size(28.dp)
-                            )
-                        }
-                    }
-                    Spacer(Modifier.width(14.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = patientName,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(Modifier.height(2.dp))
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
-                        ) {
-                            Text(
-                                text = "Active Patient Enclave",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    text = "Emergency Contact: $caretakerPhone",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+        // ── Header: Account & Profile Enclave (Double-Bezel Architecture) ───
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+                .background(
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
+                    shape = RoundedCornerShape(22.dp)
                 )
+                .border(
+                    width = 1.dp,
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
+                    shape = RoundedCornerShape(22.dp)
+                )
+                .padding(4.dp)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(18.dp),
+                color = MaterialTheme.colorScheme.primaryContainer,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(46.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Filled.Person,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.size(26.dp)
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = patientName,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                            ) {
+                                Text(
+                                    text = "ACTIVE PATIENT ENCLAVE",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 1.1.sp,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        text = "Emergency Contact: $caretakerPhone",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                    )
+                }
             }
         }
 
