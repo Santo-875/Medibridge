@@ -1,6 +1,7 @@
 package com.medibridge.moduleD_shell.ui
 
 import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -12,6 +13,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -91,7 +93,7 @@ fun MedicinesScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 16.dp)
+                .padding(horizontal = 20.dp)
         ) {
             // Search Bar
             OutlinedTextField(
@@ -99,7 +101,7 @@ fun MedicinesScreen(
                 onValueChange = { searchQuery = it },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 4.dp),
+                    .padding(vertical = 6.dp),
                 placeholder = {
                     Text(
                         text = "Search by medicine name...",
@@ -134,7 +136,7 @@ fun MedicinesScreen(
                 )
             )
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
             // Filter segmented toggle
             SegmentedToggle(
@@ -151,7 +153,74 @@ fun MedicinesScreen(
                 }
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(14.dp))
+
+            val takenMedIds = remember { mutableStateMapOf<String, Boolean>() }
+            val takenCount = medications.count { takenMedIds[it.id] == true }
+            val totalCount = medications.size
+            val adherencePercent = if (totalCount > 0) (takenCount.toFloat() / totalCount.toFloat()) else 0f
+            val animatedProgress by animateFloatAsState(
+                targetValue = adherencePercent,
+                animationSpec = tween(600, easing = FastOutSlowInEasing),
+                label = "adherenceProgress"
+            )
+
+            if (medications.isNotEmpty()) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)),
+                    tonalElevation = 1.dp
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.EventAvailable,
+                                    contentDescription = null,
+                                    tint = com.medibridge.core.theme.TealPrimary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Today's Schedule Progress",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                            Text(
+                                text = "$takenCount of $totalCount Taken",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (takenCount == totalCount && totalCount > 0) com.medibridge.core.theme.StatusVerified else com.medibridge.core.theme.TealPrimary
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        LinearProgressIndicator(
+                            progress = { animatedProgress },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(8.dp)
+                                .clip(RoundedCornerShape(4.dp)),
+                            color = if (takenCount == totalCount && totalCount > 0) com.medibridge.core.theme.StatusVerified else com.medibridge.core.theme.TealPrimary,
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
 
             SectionHeader(
                 title = "All Prescriptions",
@@ -191,19 +260,22 @@ fun MedicinesScreen(
                         items = filteredMeds,
                         key = { it.id }
                     ) { med ->
-                        var isTakenToday by remember { mutableStateOf(false) }
+                        val isTaken = takenMedIds[med.id] == true
 
                         MediCard(
                             medication = med,
                             onClick = { onMedicationClick(med.id) },
                             onTakenClick = {
-                                isTakenToday = true
-                                scheduleViewModel.markTaken("${med.id}_08:00_today", med.name, med.dose)
+                                val nextState = !isTaken
+                                takenMedIds[med.id] = nextState
+                                if (nextState) {
+                                    scheduleViewModel.markTaken("${med.id}_08:00_today", med.name, med.dose)
+                                }
                             },
                             onSnoozeClick = {
                                 scheduleViewModel.snooze("${med.id}_08:00_today", 15)
                             },
-                            isTaken = isTakenToday
+                            isTaken = isTaken
                         )
                     }
                 }

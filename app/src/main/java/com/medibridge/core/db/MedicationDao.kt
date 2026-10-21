@@ -67,4 +67,13 @@ interface MedicationDao {
      */
     @Query("SELECT * FROM medications WHERE conflicts != '[]' AND conflicts != ''")
     fun getMedicationsWithConflicts(): Flow<List<MedicationEntity>>
+
+    @Query("SELECT * FROM medications WHERE profileId = :profileId AND deletedAt IS NULL ORDER BY name ASC")
+    fun getMedicationsForProfile(profileId: String): Flow<List<MedicationEntity>>
+
+    @Query("SELECT * FROM medications WHERE synced = 0")
+    suspend fun getUnsyncedMedications(): List<MedicationEntity>
+
+    @Query("UPDATE medications SET synced = 1 WHERE id = :id")
+    suspend fun markSynced(id: String)
 }

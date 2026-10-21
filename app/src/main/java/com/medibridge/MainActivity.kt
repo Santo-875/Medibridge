@@ -22,6 +22,9 @@ import com.medibridge.moduleD_shell.viewmodel.SettingsViewModel
  * Each module composable is reached via Navigation Compose — this Activity
  * never needs to be modified when new modules are added.
  */
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
+
 class MainActivity : ComponentActivity() {
 
     // SettingsViewModel survives configuration changes (rotation, etc.)
@@ -31,6 +34,27 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         com.medibridge.core.network.BackendClient.init(this)
+
+        com.medibridge.core.sync.SyncWorker.enqueuePeriodicWork(this)
+        lifecycleScope.launch {
+            val tokenMgr = com.medibridge.core.auth.AuthTokenManager.getInstance(this@MainActivity)
+            if (tokenMgr.hasToken()) {
+                val session = com.medibridge.core.session.UserSessionManager.getInstance(this@MainActivity)
+                session.ensureInitialized()
+                val uid = session.getOrCreateUserId()
+                if (uid.isNotBlank()) {
+                    try {
+                        com.medibridge.core.network.BackendClient.getService().registerDevice(
+                            com.medibridge.core.network.DeviceRegisterRequest(
+                                fcmToken = "device_${uid.take(8)}",
+                                platform = "android"
+                            )
+                        )
+                    } catch (_: Exception) {}
+                    com.medibridge.core.sync.SyncRepository.getInstance(this@MainActivity).syncNow()
+                }
+            }
+        }
 
         // Initialize Gemini API key from persistent storage if overridden
         val prefs = getSharedPreferences("medibridge_prefs", MODE_PRIVATE)

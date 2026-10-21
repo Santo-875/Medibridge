@@ -168,7 +168,12 @@ data class MedicationObject(
     val callReminderStatus: String = "not_set",
 
     /** Map keyed by role ("doctor", "caretaker", "pharmacy") holding role-specific summaries (Module D RBAC + Module C). */
-    val privacySummary: Map<String, String> = emptyMap()
+    val privacySummary: Map<String, String> = emptyMap(),
+
+    val profileId: String = "default_me",
+    val updatedAt: Long = System.currentTimeMillis(),
+    val deletedAt: Long? = null,
+    val synced: Boolean = false
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -203,7 +208,11 @@ fun MedicationObject.toEntity(): MedicationEntity = MedicationEntity(
     billImageUrl = billImageUrl,
     caretakerPhone = caretakerPhone,
     callReminderStatus = callReminderStatus,
-    privacySummary = gson.toJson(privacySummary)
+    privacySummary = gson.toJson(privacySummary),
+    profileId = profileId,
+    updatedAt = updatedAt,
+    deletedAt = deletedAt,
+    synced = synced
 )
 
 /** Converts a [MedicationEntity] (Room row) back to a [MedicationObject]. */
@@ -239,7 +248,11 @@ fun MedicationEntity.fromEntity(): MedicationObject {
         billImageUrl = billImageUrl,
         caretakerPhone = caretakerPhone,
         callReminderStatus = callReminderStatus,
-        privacySummary = gson.fromJson(privacySummary, mapType) ?: emptyMap()
+        privacySummary = gson.fromJson(privacySummary, mapType) ?: emptyMap(),
+        profileId = profileId,
+        updatedAt = updatedAt,
+        deletedAt = deletedAt,
+        synced = synced
     )
 }
 
@@ -247,134 +260,5 @@ fun MedicationEntity.fromEntity(): MedicationObject {
 // Mock / Seed Data — used by HomeScreen while DB is empty (hackathon shell)
 // Replace with real DB queries once Module A populates the database.
 // ─────────────────────────────────────────────────────────────────────────────
-val mockMedications: List<MedicationObject> = listOf(
-    MedicationObject(
-        id = "med-001",
-        name = "Metformin",
-        strength = "500mg",
-        dose = "1 tablet",
-        frequency = "Twice daily",
-        timing = "After meals",
-        duration = "90 days",
-        confidence = 0.97f,
-        needsVerification = false,
-        verifiedByUser = true,
-        crossVerified = true,
-        conflicts = emptyList(),
-        reviewRecommended = false,
-        schedule = listOf(
-            ScheduleSlot("08:00", "Morning", true),
-            ScheduleSlot("20:00", "Night", true)
-        ),
-        adherence = emptyList(),
-        summary = "Controls blood sugar. Take with food to reduce stomach upset.",
-        sideEffects = listOf("Nausea", "Diarrhea", "Stomach pain"),
-        visibleTo = listOf("patient", "doctor"),
-        imageUrl = null,
-        sourceType = "bill",
-        consultationNotes = "Patient confirmed routine usage with meals.",
-        billImageUrl = null,
-        caretakerPhone = "+15550199",
-        callReminderStatus = "verified",
-        privacySummary = mapOf(
-            "doctor" to "Doctor view: full medication history + conflicts",
-            "caretaker" to "Caretaker view: schedule adherence & emergency info",
-            "pharmacy" to "Pharmacy view: active prescriptions & refill status"
-        )
-    ),
-    MedicationObject(
-        id = "med-002",
-        name = "Amlodipine",
-        strength = "5mg",
-        dose = "1 tablet",
-        frequency = "Once daily",
-        timing = "After breakfast",
-        duration = "30 days",
-        confidence = 0.91f,
-        needsVerification = false,
-        verifiedByUser = true,
-        crossVerified = false,
-        conflicts = listOf(
-            MedicationConflict("med-003", "interaction", "May enhance hypotensive effect of Lisinopril")
-        ),
-        reviewRecommended = true,
-        schedule = listOf(ScheduleSlot("09:00", "Morning", false)),
-        adherence = emptyList(),
-        summary = "Blood pressure medication. Avoid grapefruit juice.",
-        sideEffects = listOf("Swelling of ankles", "Headache", "Flushing"),
-        visibleTo = listOf("patient", "caregiver", "doctor"),
-        imageUrl = null,
-        sourceType = "voice",
-        consultationNotes = "Doctor noted potential blood pressure drop with Lisinopril.",
-        billImageUrl = null,
-        caretakerPhone = null,
-        callReminderStatus = "not_set",
-        privacySummary = mapOf(
-            "doctor" to "Doctor view: full medication history + conflicts",
-            "caretaker" to "Caretaker view: schedule adherence & emergency info",
-            "pharmacy" to "Pharmacy view: active prescriptions & refill status"
-        )
-    ),
-    MedicationObject(
-        id = "med-003",
-        name = "Lisinopril",
-        strength = "10mg",
-        dose = "1 tablet",
-        frequency = "Once daily",
-        timing = "Before bed",
-        duration = "60 days",
-        confidence = 0.65f,
-        needsVerification = true,
-        verifiedByUser = false,
-        crossVerified = false,
-        conflicts = emptyList(),
-        reviewRecommended = false,
-        schedule = listOf(ScheduleSlot("22:00", "Night", false)),
-        adherence = emptyList(),
-        summary = "ACE inhibitor for heart & BP. Low AI confidence — please verify dose.",
-        sideEffects = listOf("Dry cough", "Dizziness", "High potassium"),
-        visibleTo = listOf("patient"),
-        imageUrl = null,
-        sourceType = "bill",
-        consultationNotes = "",
-        billImageUrl = null,
-        caretakerPhone = null,
-        callReminderStatus = "not_set",
-        privacySummary = mapOf(
-            "doctor" to "Doctor view: full medication history + conflicts",
-            "caretaker" to "Caretaker view: schedule adherence & emergency info",
-            "pharmacy" to "Pharmacy view: active prescriptions & refill status"
-        )
-    ),
-    MedicationObject(
-        id = "med-004",
-        name = "Vitamin D3",
-        strength = "1000 IU",
-        dose = "1 softgel",
-        frequency = "Once daily",
-        timing = "After breakfast",
-        duration = "Ongoing",
-        confidence = 0.99f,
-        needsVerification = false,
-        verifiedByUser = true,
-        crossVerified = true,
-        conflicts = emptyList(),
-        reviewRecommended = false,
-        schedule = listOf(ScheduleSlot("09:00", "Morning", true)),
-        adherence = emptyList(),
-        summary = "Supplement for bone health and immunity.",
-        sideEffects = listOf("Rare at normal doses"),
-        visibleTo = listOf("patient"),
-        imageUrl = null,
-        sourceType = "voice",
-        consultationNotes = "Daily supplement recommended by physician.",
-        billImageUrl = null,
-        caretakerPhone = null,
-        callReminderStatus = "not_set",
-        privacySummary = mapOf(
-            "doctor" to "Doctor view: full medication history + conflicts",
-            "caretaker" to "Caretaker view: schedule adherence & emergency info",
-            "pharmacy" to "Pharmacy view: active prescriptions & refill status"
-        )
-    )
-)
+val mockMedications: List<MedicationObject> = emptyList()
+

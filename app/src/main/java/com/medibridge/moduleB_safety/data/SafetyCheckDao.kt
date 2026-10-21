@@ -27,6 +27,12 @@ interface SafetyCheckDao {
     @Query("SELECT * FROM safety_checks WHERE id = :id")
     suspend fun getSafetyCheckById(id: String): SafetyCheckEntity?
 
+    @Query("SELECT * FROM safety_checks WHERE synced = 0")
+    suspend fun getUnsyncedSafetyChecks(): List<SafetyCheckEntity>
+
+    @Query("UPDATE safety_checks SET synced = 1 WHERE id = :id")
+    suspend fun markSynced(id: String)
+
     @Query("DELETE FROM safety_checks WHERE id = :id")
     suspend fun deleteById(id: String)
 

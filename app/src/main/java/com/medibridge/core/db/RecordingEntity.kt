@@ -18,5 +18,10 @@ data class RecordingEntity(
     val transcript: String = "",
     val summary: String = "",
     /** Upload/transcription status: "pending" | "transcribed" | "failed" */
-    val status: String = "pending"
+    val status: String = "pending",
+    val uuid: String = java.util.UUID.randomUUID().toString(),
+    val profileId: String = "default_me",
+    val updatedAt: Long = System.currentTimeMillis(),
+    val deletedAt: Long? = null,
+    val synced: Boolean = false
 )

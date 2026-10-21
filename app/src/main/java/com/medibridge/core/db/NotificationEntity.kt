@@ -24,5 +24,10 @@ data class NotificationEntity(
     /** Unix epoch millis of when the alert was generated. */
     val timestamp: Long,
     /** false = unread (shows as bold / badge incremented), true = read. */
-    val isRead: Boolean = false
+    val isRead: Boolean = false,
+    val uuid: String = java.util.UUID.randomUUID().toString(),
+    val profileId: String = "default_me",
+    val updatedAt: Long = System.currentTimeMillis(),
+    val deletedAt: Long? = null,
+    val synced: Boolean = false
 )

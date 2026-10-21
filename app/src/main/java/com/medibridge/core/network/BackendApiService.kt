@@ -15,12 +15,13 @@ import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
-import retrofit2.http.Multipart
-import retrofit2.http.POST
-import retrofit2.http.Part
+import retrofit2.http.*
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.runBlocking
+import android.content.Context
+import com.medibridge.core.session.UserSessionManager
 
 // ── DTOs for Prescription Scanning ──────────────────────────────────────────
 
@@ -123,6 +124,49 @@ interface BackendApiService {
     suspend fun uploadSpeech(
         @Part file: MultipartBody.Part
     ): SpeechUploadResponse
+
+    @POST("auth/register")
+    suspend fun register(
+        @Body request: RegisterRequest
+    ): AuthResponse
+
+    @POST("auth/login")
+    suspend fun login(
+        @Body request: LoginRequest
+    ): AuthResponse
+
+    @GET("sync/pull")
+    suspend fun syncPull(
+        @Query("since") since: String? = null
+    ): SyncPullResponse
+
+    @POST("sync/push")
+    suspend fun syncPush(
+        @Body payload: SyncPushRequest
+    ): SyncPushResponse
+
+    @GET("profiles")
+    suspend fun getProfiles(): List<ApiProfileResponse>
+
+    @POST("care/invite")
+    suspend fun createCareInvite(
+        @Body request: CareInviteRequest
+    ): CareInviteResponse
+
+    @POST("care/accept")
+    suspend fun acceptCareInvite(
+        @Body request: CareAcceptRequest
+    ): CareAcceptResponse
+
+    @POST("care/revoke")
+    suspend fun revokeCareLink(
+        @Body request: CareRevokeRequest
+    ): Map<String, Any>
+
+    @POST("devices")
+    suspend fun registerDevice(
+        @Body request: DeviceRegisterRequest
+    ): Map<String, Any>
 }
 
 // ── Backend Repository & Mapping ─────────────────────────────────────────────
@@ -130,12 +174,36 @@ interface BackendApiService {
 object BackendClient {
 
     private var currentBaseUrl: String = AppNetworkConfig.effectiveBaseUrl
+    private var appContext: Context? = null
 
     private fun getOkHttpClient(): OkHttpClient {
         val logging = HttpLoggingInterceptor().apply {
             level = HttpLoggingInterceptor.Level.BODY
         }
+        val authInterceptor = okhttp3.Interceptor { chain ->
+            val request = chain.request()
+            val builder = request.newBuilder()
+                .header("X-API-Key", AppNetworkConfig.apiKey)
+            appContext?.let { ctx ->
+                val tokenMgr = com.medibridge.core.auth.AuthTokenManager.getInstance(ctx)
+                val token = tokenMgr.getToken()
+                if (!token.isNullOrBlank()) {
+                    builder.header("Authorization", "Bearer $token")
+                }
+            }
+            val response = chain.proceed(builder.build())
+            val path = request.url.encodedPath
+            if (response.code == 401 && !path.contains("/auth/")) {
+                appContext?.let { ctx ->
+                    val tokenMgr = com.medibridge.core.auth.AuthTokenManager.getInstance(ctx)
+                    tokenMgr.clearAll()
+                    com.medibridge.core.auth.AuthEvents.emitUnauthorized()
+                }
+            }
+            response
+        }
         return OkHttpClient.Builder()
+            .addInterceptor(authInterceptor)
             .addInterceptor(logging)
             .connectTimeout(45, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
@@ -166,9 +234,10 @@ object BackendClient {
     private const val PREFS_NAME = "medibridge_config"
     private const val KEY_BASE_URL = "backend_base_url"
 
-    fun init(context: android.content.Context) {
+    fun init(context: Context) {
+        appContext = context.applicationContext
         try {
-            val prefs = context.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             val saved = prefs.getString(KEY_BASE_URL, null)
             if (!saved.isNullOrBlank()) {
                 currentBaseUrl = if (saved.endsWith("/")) saved else "$saved/"
@@ -177,15 +246,10 @@ object BackendClient {
             }
         } catch (_: Exception) {}
 
-        if (AppNetworkConfig.MANUAL_LAPTOP_IP.isNotBlank()) {
-            currentBaseUrl = AppNetworkConfig.effectiveBaseUrl
-            cachedService = null
-            return
-        }
         currentBaseUrl = AppNetworkConfig.effectiveBaseUrl
     }
 
-    fun updateBaseUrl(newUrl: String, context: android.content.Context? = null) {
+    fun updateBaseUrl(newUrl: String, context: Context? = null) {
         val trimmed = newUrl.trim()
         if (trimmed.isNotBlank()) {
             val normalized = if (trimmed.endsWith("/")) trimmed else "$trimmed/"

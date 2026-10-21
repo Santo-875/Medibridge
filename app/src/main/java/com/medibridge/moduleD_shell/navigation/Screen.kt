@@ -5,6 +5,9 @@ package com.medibridge.moduleD_shell.navigation
  */
 sealed class Screen(val route: String) {
     object Intro             : Screen("intro")
+    object Login             : Screen("login")
+    object SignUp            : Screen("signup")
+    object Onboarding        : Screen("onboarding")
     object Home              : Screen("home")
     object Medicines         : Screen("medicines")
     object Scanner           : Screen("scanner")
@@ -15,6 +18,7 @@ sealed class Screen(val route: String) {
     val Settings: Screen get() = Profile
     object SafetyDashboard   : Screen("safety_dashboard")
     object AddEditMedication : Screen("add_edit_medication")
+    object ConsultationRecordings : Screen("consultation_recordings")
 }
 
 sealed class BottomNavItem(

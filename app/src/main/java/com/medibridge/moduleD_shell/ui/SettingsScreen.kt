@@ -9,6 +9,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -23,6 +24,7 @@ import com.medibridge.core.theme.*
 import com.medibridge.moduleC_schedule.tts.ReminderLanguage
 import com.medibridge.moduleD_shell.ui.components.*
 import com.medibridge.moduleD_shell.viewmodel.SettingsViewModel
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -45,15 +47,70 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
 
     var selectedTextSize by remember { mutableStateOf(AppTextSize.DEFAULT) }
 
+    val sessionManager = remember { com.medibridge.core.session.UserSessionManager.getInstance(context) }
+    val activeProfileId by sessionManager.activeProfileIdFlow.collectAsState(initial = com.medibridge.core.session.UserSessionManager.DEFAULT_PROFILE_ID)
+    val activeProfileName by sessionManager.activeProfileNameFlow.collectAsState(initial = "Alex")
+    val userId by sessionManager.userIdFlow.collectAsState(initial = "")
+
+    val db = remember { com.medibridge.core.db.AppDatabase.getInstance(context) }
+    val careLinks by db.careLinkDao().getCareLinksForProfile(activeProfileId).collectAsState(initial = emptyList())
+    var showCareLinkDialog by remember { mutableStateOf(false) }
+
     val recordingsFlow = remember(context) { viewModel.observeRecordings(context) }
     val recordingsList by recordingsFlow.collectAsState(initial = emptyList())
     var selectedRecordingForDialog by remember { mutableStateOf<RecordingEntity?>(null) }
     var phoneInput by remember(caretakerPhone) { mutableStateOf(caretakerPhone) }
     var phoneSavedFeedback by remember { mutableStateOf(false) }
 
+    val authManager = remember { com.medibridge.core.auth.AuthTokenManager.getInstance(context) }
+    val currentUsername = authManager.getUsername() ?: ""
+    val currentName = authManager.getUserName() ?: activeProfileName
+    var showLogoutDialog by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
+
     var showUrlDialog by remember { mutableStateOf(false) }
     var currentUrl by remember { mutableStateOf(com.medibridge.core.network.BackendClient.getBaseUrl()) }
     var urlInput by remember { mutableStateOf(currentUrl) }
+
+    if (showLogoutDialog) {
+        AlertDialog(
+            onDismissRequest = { showLogoutDialog = false },
+            shape = RoundedCornerShape(20.dp),
+            icon = { Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+            title = { Text("Log Out", fontWeight = FontWeight.Bold) },
+            text = { Text("Are you sure you want to log out? Your local data will be cleared.") },
+            confirmButton = {
+                DestructiveButton(
+                    text = "Log Out",
+                    size = ButtonSize.Small,
+                    onClick = {
+                        showLogoutDialog = false
+                        coroutineScope.launch {
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                db.clearAllTables()
+                            }
+                            com.medibridge.core.auth.AuthTokenManager.getInstance(context).clearAll()
+                            com.medibridge.core.auth.AuthEvents.emitUnauthorized()
+                        }
+                    }
+                )
+            },
+            dismissButton = {
+                TextButton(onClick = { showLogoutDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Care Link dialog
+    if (showCareLinkDialog) {
+        CareLinkDialog(
+            profileId = activeProfileId,
+            profileName = activeProfileName,
+            onDismiss = { showCareLinkDialog = false }
+        )
+    }
 
     // Dialog showing full transcript & clinical summary of clicked recording
     selectedRecordingForDialog?.let { recording ->
@@ -212,22 +269,123 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
 
                     Spacer(modifier = Modifier.width(14.dp))
 
-                    val prefs = remember { context.getSharedPreferences("medibridge_prefs", Context.MODE_PRIVATE) }
-                    val patientName = remember { prefs.getString("patient_name", "My Health Profile") ?: "My Health Profile" }
-
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = patientName,
+                            text = currentName,
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = "MediBridge Clinical Patient Account",
+                            text = if (currentUsername.isNotBlank()) "@$currentUsername" else "Authenticated",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+
+                    DestructiveButton(
+                        text = "Log Out",
+                        icon = Icons.AutoMirrored.Filled.Logout,
+                        size = ButtonSize.Small,
+                        onClick = { showLogoutDialog = true }
+                    )
+                }
+            }
+
+            // ── 0. Care Links & Family Section ────────────────────────────────
+            SettingsCard(title = "Care Links & Caretakers", icon = Icons.Default.FamilyRestroom) {
+                Text(
+                    text = "Share access with family members and caretakers without requiring accounts. Invitees can view doses or manage prescriptions using secure 6-character codes.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(14.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    PrimaryButton(
+                        text = "Invite Caretaker",
+                        icon = Icons.Default.PersonAdd,
+                        size = ButtonSize.Small,
+                        onClick = { showCareLinkDialog = true },
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    SecondaryButton(
+                        text = "Join with Code",
+                        icon = Icons.Default.VpnKey,
+                        size = ButtonSize.Small,
+                        onClick = { showCareLinkDialog = true },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                if (careLinks.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(14.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "Active Care Links (${careLinks.size})",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    val coroutineScope = rememberCoroutineScope()
+                    careLinks.forEach { link ->
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text(
+                                        text = if (link.inviteCode.isNotEmpty()) "Code: ${link.inviteCode}" else "Caretaker Link",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = "Permission: ${link.permission} • Status: ${link.status}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+
+                                TextButton(
+                                    onClick = {
+                                        coroutineScope.launch {
+                                            try {
+                                                com.medibridge.core.network.BackendClient.getService()
+                                                    .revokeCareLink(com.medibridge.core.network.CareRevokeRequest(link.id))
+                                                db.careLinkDao().revokeCareLink(link.id)
+                                                android.widget.Toast.makeText(context, "Care link revoked", android.widget.Toast.LENGTH_SHORT).show()
+                                            } catch (e: Exception) {
+                                                android.widget.Toast.makeText(context, "Could not revoke: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    }
+                                ) {
+                                    Text(
+                                        text = "Revoke",
+                                        color = MaterialTheme.colorScheme.error,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -364,37 +522,89 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                 }
             }
 
-            // ── 4. Cloud & Network Configuration ──────────────────────────────
-            SettingsCard(title = "AI & Backend Server", icon = Icons.Default.Cloud) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Server Endpoint",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = currentUrl,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1
+            // ── 4. Developer Section (Hidden / Collapsible) ─────────────────
+            var showDeveloperSection by remember { mutableStateOf(false) }
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .clickable { showDeveloperSection = !showDeveloperSection },
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)),
+                tonalElevation = 1.dp
+            ) {
+                Column(modifier = Modifier.padding(18.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.Code,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.secondary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                text = "Developer Options",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        Icon(
+                            imageVector = if (showDeveloperSection) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = if (showDeveloperSection) "Collapse" else "Expand",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
 
-                    SecondaryButton(
-                        text = "Edit URL",
-                        icon = Icons.Default.Edit,
-                        size = ButtonSize.Small,
-                        onClick = {
-                            urlInput = currentUrl
-                            showUrlDialog = true
+                    if (showDeveloperSection) {
+                        Spacer(modifier = Modifier.height(14.dp))
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Server Endpoint",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = currentUrl,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1
+                                )
+                            }
+
+                            SecondaryButton(
+                                text = "Edit URL",
+                                icon = Icons.Default.Edit,
+                                size = ButtonSize.Small,
+                                onClick = {
+                                    urlInput = currentUrl
+                                    showUrlDialog = true
+                                }
+                            )
                         }
-                    )
+                    }
                 }
             }
 

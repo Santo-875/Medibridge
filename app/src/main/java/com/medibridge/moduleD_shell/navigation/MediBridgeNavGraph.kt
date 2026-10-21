@@ -11,30 +11,84 @@ import com.medibridge.moduleB_safety.ui.SafetyScreen
 import com.medibridge.moduleD_shell.ui.*
 import com.medibridge.moduleD_shell.viewmodel.SettingsViewModel
 
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.remember
+import com.medibridge.core.auth.AuthTokenManager
+import com.medibridge.moduleD_shell.ui.auth.LoginScreen
+import com.medibridge.moduleD_shell.ui.auth.SignUpScreen
+import com.medibridge.moduleD_shell.ui.auth.OnboardingScreen
+
 @Composable
 fun MediBridgeNavGraph(
     navController: NavHostController,
     settingsViewModel: SettingsViewModel,
     onOpenDrawer: () -> Unit = {}
 ) {
+    val context = LocalContext.current
+    val startDest = remember {
+        if (AuthTokenManager.getInstance(context).hasToken()) Screen.Home.route else Screen.Login.route
+    }
+
     NavHost(
         navController = navController,
-        startDestination = Screen.Intro.route,
+        startDestination = startDest,
         enterTransition = { fadeIn(animationSpec = tween(220)) },
         exitTransition = { fadeOut(animationSpec = tween(220)) },
         popEnterTransition = { fadeIn(animationSpec = tween(220)) },
         popExitTransition = { fadeOut(animationSpec = tween(220)) }
     ) {
-        // Intro Screen
-        composable(Screen.Intro.route) {
-            IntroVideoScreen(
-                onIntroComplete = {
+        // Auth Screens
+        composable(Screen.Login.route) {
+            LoginScreen(
+                onNavigateToSignUp = {
+                    navController.navigate(Screen.SignUp.route)
+                },
+                onLoginSuccess = {
                     navController.navigate(Screen.Home.route) {
-                        popUpTo(Screen.Intro.route) { inclusive = true }
+                        popUpTo(0) { inclusive = true }
                         launchSingleTop = true
                     }
                 }
             )
+        }
+
+        composable(Screen.SignUp.route) {
+            SignUpScreen(
+                onNavigateToLogin = {
+                    navController.navigate(Screen.Login.route) {
+                        popUpTo(Screen.SignUp.route) { inclusive = true }
+                    }
+                },
+                onSignUpSuccess = {
+                    navController.navigate(Screen.Onboarding.route) {
+                        popUpTo(0) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                }
+            )
+        }
+
+        composable(Screen.Onboarding.route) {
+            OnboardingScreen(
+                settingsViewModel = settingsViewModel,
+                onOnboardingComplete = {
+                    navController.navigate(Screen.Home.route) {
+                        popUpTo(0) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                }
+            )
+        }
+
+        // Intro / Splash Screen — direct immediate launch without video
+        composable(Screen.Intro.route) {
+            val target = if (AuthTokenManager.getInstance(context).hasToken()) Screen.Home.route else Screen.Login.route
+            androidx.compose.runtime.LaunchedEffect(Unit) {
+                navController.navigate(target) {
+                    popUpTo(Screen.Intro.route) { inclusive = true }
+                    launchSingleTop = true
+                }
+            }
         }
 
         // Top-Level Tab: Home
@@ -45,7 +99,9 @@ fun MediBridgeNavGraph(
                 onReminderClick = { navController.navigate(Screen.Reminders.route) },
                 onSafetyClick = { navController.navigate(Screen.SafetyDashboard.route) },
                 onRecordClick = { navController.navigate(Screen.Recording.route) },
-                onOpenDrawer = onOpenDrawer
+                onRecordingsListClick = { navController.navigate(Screen.ConsultationRecordings.route) },
+                onMedicinesClick = { navController.navigate(Screen.Medicines.route) },
+                onSettingsClick = { navController.navigate(Screen.Profile.route) }
             )
         }
 
@@ -115,7 +171,24 @@ fun MediBridgeNavGraph(
                         launchSingleTop = true
                         restoreState = true
                     }
+                },
+                onNavigateToRecordingsList = {
+                    navController.navigate(Screen.ConsultationRecordings.route)
                 }
+            )
+        }
+
+        // Detail Slide Screen: Consultation Recordings
+        composable(
+            route = Screen.ConsultationRecordings.route,
+            enterTransition = { slideIntoContainer(SlideDirection.Start, tween(280)) },
+            exitTransition = { slideOutOfContainer(SlideDirection.Start, tween(280)) },
+            popEnterTransition = { slideIntoContainer(SlideDirection.End, tween(280)) },
+            popExitTransition = { slideOutOfContainer(SlideDirection.End, tween(280)) }
+        ) {
+            ConsultationRecordingsScreen(
+                onBack = { navController.popBackStack() },
+                onNewRecording = { navController.navigate(Screen.Recording.route) }
             )
         }
 

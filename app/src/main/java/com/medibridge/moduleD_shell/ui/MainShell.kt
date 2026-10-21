@@ -45,15 +45,28 @@ fun MainShell(
         }
     }
 
+    LaunchedEffect(Unit) {
+        com.medibridge.core.auth.AuthEvents.unauthorized.collect {
+            navController.navigate(Screen.Login.route) {
+                popUpTo(0) { inclusive = true }
+                launchSingleTop = true
+            }
+        }
+    }
+
     val navBackStack by navController.currentBackStackEntryAsState()
     val currentDest = navBackStack?.destination
 
     val hideBottomNavRoutes = setOf(
         Screen.Intro.route,
+        Screen.Login.route,
+        Screen.SignUp.route,
+        Screen.Onboarding.route,
         Screen.Scanner.route,
         Screen.Recording.route,
         Screen.AddEditMedication.route,
-        Screen.SafetyDashboard.route
+        Screen.SafetyDashboard.route,
+        Screen.ConsultationRecordings.route
     )
     val showBottomNav = currentDest?.route !in hideBottomNavRoutes
 

@@ -82,5 +82,10 @@ data class MedicationEntity(
     val callReminderStatus: String = "not_set",
 
     /** JSON string map keyed by role ("doctor", "caretaker", "pharmacy") holding role-specific summaries. */
-    val privacySummary: String = "{}"
+    val privacySummary: String = "{}",
+
+    val profileId: String = "default_me",
+    val updatedAt: Long = System.currentTimeMillis(),
+    val deletedAt: Long? = null,
+    val synced: Boolean = false
 )

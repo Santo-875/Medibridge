@@ -10,5 +10,5 @@ object AiConfig {
     val GEMINI_API_KEY: String
         get() = GeminiConfigProvider.getApiKey() ?: ""
 
-    const val MODEL_NAME: String = "gemini-1.5-flash"
+    const val MODEL_NAME: String = "gemini-flash-latest"
 }

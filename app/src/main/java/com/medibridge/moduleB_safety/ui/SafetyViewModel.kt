@@ -15,14 +15,11 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class SafetyUiState(
-    val scenarios: List<SafetyDemoScenario> = MockSafetyRepository.demoScenarios,
+    val scenarios: List<SafetyDemoScenario> = emptyList(),
     val selectedScenarioIndex: Int = 0,
     val activeHistory: List<MedicationObject> = emptyList(),
-    val currentMedication: MedicationObject = MockSafetyRepository.demoScenarios[0].candidateMedication,
-    val evaluationResult: SafetyEvaluationResult = SafetyEngine.evaluateSafety(
-        MockSafetyRepository.demoScenarios[0].candidateMedication,
-        emptyList()
-    ),
+    val currentMedication: MedicationObject? = null,
+    val evaluationResult: SafetyEvaluationResult? = null,
     val aiResponse: AiSafetyResponse? = null,
     val isAiLoading: Boolean = false,
     val savedSafetyHistory: List<SafetyCheckEntity> = emptyList()
@@ -52,39 +49,32 @@ class SafetyViewModel(
         viewModelScope.launch {
             medicationDao.getAllMedications().collect { entities ->
                 val realHistory = entities.map { it.fromEntity() }
+                val currentMed = _uiState.value.currentMedication?.let { existing ->
+                    realHistory.find { it.id == existing.id }
+                } ?: realHistory.firstOrNull()
+
+                val evalResult = if (currentMed != null) {
+                    val otherMeds = realHistory.filter { it.id != currentMed.id }
+                    SafetyEngine.evaluateSafety(currentMed, otherMeds)
+                } else null
+
                 _uiState.update { current ->
-                    val updatedEval = SafetyEngine.evaluateSafety(current.currentMedication, realHistory)
                     current.copy(
                         activeHistory = realHistory,
-                        evaluationResult = updatedEval
+                        currentMedication = currentMed,
+                        evaluationResult = evalResult
                     )
+                }
+                if (currentMed != null && evalResult != null) {
+                    evaluateAndPersistCurrent()
                 }
             }
         }
-
-        // 3. Run initial scenario evaluation, generate AI explanation & persist
-        evaluateAndPersistCurrent()
     }
 
-    fun selectScenario(index: Int) {
-        if (index !in _uiState.value.scenarios.indices) return
-        val scenario = _uiState.value.scenarios[index]
-        val result = SafetyEngine.evaluateSafety(scenario.candidateMedication, _uiState.value.activeHistory)
-
-        _uiState.update { current ->
-            current.copy(
-                selectedScenarioIndex = index,
-                currentMedication = scenario.candidateMedication,
-                evaluationResult = result,
-                isAiLoading = true
-            )
-        }
-
-        evaluateAndPersistCurrent()
-    }
-
-    fun runEvaluationFor(medication: MedicationObject) {
-        val result = SafetyEngine.evaluateSafety(medication, _uiState.value.activeHistory)
+    fun selectMedication(medication: MedicationObject) {
+        val otherMeds = _uiState.value.activeHistory.filter { it.id != medication.id }
+        val result = SafetyEngine.evaluateSafety(medication, otherMeds)
         _uiState.update { current ->
             current.copy(
                 currentMedication = medication,
@@ -92,25 +82,35 @@ class SafetyViewModel(
                 isAiLoading = true
             )
         }
+        evaluateAndPersistCurrent()
+    }
 
+    fun selectScenario(index: Int) {
+        // No-op for mock scenarios, real medications use selectMedication
+    }
+
+    fun runEvaluationFor(medication: MedicationObject) {
+        val otherMeds = _uiState.value.activeHistory.filter { it.id != medication.id }
+        val result = SafetyEngine.evaluateSafety(medication, otherMeds)
+        _uiState.update { current ->
+            current.copy(
+                currentMedication = medication,
+                evaluationResult = result,
+                isAiLoading = true
+            )
+        }
         evaluateAndPersistCurrent()
     }
 
     private fun evaluateAndPersistCurrent() {
-        val currentMed = _uiState.value.currentMedication
-        val history = _uiState.value.activeHistory
-        val evaluation = _uiState.value.evaluationResult
+        val currentMed = _uiState.value.currentMedication ?: return
+        val history = _uiState.value.activeHistory.filter { it.id != currentMed.id }
+        val evaluation = _uiState.value.evaluationResult ?: return
 
         viewModelScope.launch {
             _uiState.update { it.copy(isAiLoading = true) }
-
-            // 1. Construct structured input for AI
             val aiInput = SafetyEngine.buildAiComparisonInput(currentMed, history, evaluation)
-
-            // 2. Generate polite AI contextualization (uses Gemini or robust local fallback)
             val aiResponse = aiAnalyzer.analyzeSafety(aiInput)
-
-            // 3. Persist record to Room database
             try {
                 safetyRepository.persistSafetyEvaluation(
                     evaluation = evaluation,
@@ -119,10 +119,8 @@ class SafetyViewModel(
                     history = history
                 )
             } catch (e: Exception) {
-                // Silently handle any DB storage exception during demo
+                // Silently handle any DB storage exception
             }
-
-            // 4. Update UI state
             _uiState.update {
                 it.copy(
                     aiResponse = aiResponse,

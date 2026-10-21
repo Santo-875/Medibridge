@@ -21,6 +21,7 @@ android {
         val envFile = rootProject.file(".env")
         var envBackendUrl = "http://10.0.2.2:8000/"
         var envGeminiKey = ""
+        var envApiKey = "medibridge_secret_api_key_2026"
         if (envFile.exists()) {
             envFile.forEachLine { line ->
                 val trimmed = line.trim()
@@ -28,6 +29,12 @@ android {
                     val url = trimmed.substringAfter("=").trim().trim('"', '\'')
                     if (url.isNotEmpty()) {
                         envBackendUrl = if (url.endsWith("/")) url else "$url/"
+                    }
+                }
+                if (trimmed.startsWith("API_KEY=")) {
+                    val key = trimmed.substringAfter("API_KEY=").trim().trim('"', '\'')
+                    if (key.isNotEmpty()) {
+                        envApiKey = key
                     }
                 }
                 if (trimmed.startsWith("GEMINI_API_KEY=") && !trimmed.startsWith("#")) {
@@ -40,6 +47,7 @@ android {
         }
         buildConfigField("String", "BACKEND_BASE_URL", "\"$envBackendUrl\"")
         buildConfigField("String", "GEMINI_API_KEY", "\"$envGeminiKey\"")
+        buildConfigField("String", "API_KEY", "\"$envApiKey\"")
     }
 
     buildTypes {
@@ -112,6 +120,12 @@ dependencies {
 
     // WorkManager — periodic missed-dose detection (Module C)
     implementation("androidx.work:work-runtime-ktx:2.9.1")
+
+    // DataStore Preferences for user identity & active profile session
+    implementation("androidx.datastore:datastore-preferences:1.1.1")
+
+    // Security Crypto (EncryptedSharedPreferences)
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
     // CameraX for Module A OCR/Bill Scanner
     implementation("androidx.camera:camera-core:1.3.4")

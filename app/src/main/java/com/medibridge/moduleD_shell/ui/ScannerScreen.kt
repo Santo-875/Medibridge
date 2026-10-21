@@ -43,6 +43,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.medibridge.core.model.MedicationObject
+import com.medibridge.core.network.ApiMedicationItem
+import com.medibridge.core.network.ApiValidationInfo
 import com.medibridge.core.network.BackendClient
 import com.medibridge.core.pipeline.MedicationIngestionPipeline
 import com.medibridge.core.theme.*
@@ -677,7 +679,7 @@ private suspend fun processDocumentAndPipeline(
     }
 
     if (candidateMeds.isEmpty()) {
-        throw IllegalStateException("No valid medications found to review.")
+        throw IllegalStateException("No medications found to ingest. Please ensure prescription is legible.")
     }
 
     return MedicationIngestionPipeline.evaluatePipeline(context, candidateMeds)

@@ -122,12 +122,16 @@ class ChatRepository(private val context: Context) {
                     You are Medi, an intelligent, empathetic medical assistant inside the MediBridge health app.
                     Answer the patient's question accurately, concisely, and with warmth, using ONLY the verified medical context below.
                     
-                    Rules:
-                    1. Base your answer strictly on the patient's actual medications, schedule, safety flags, and consultation recordings.
-                    2. If asked about taking medications or missed doses, provide clear, safe advice.
-                    3. Highlight any active conflicts or precautions if relevant.
-                    4. Keep replies clear and easy to read (use 2-3 short bullet points when listing actions).
-                    5. End with a reminder to consult their healthcare provider for prescription changes.
+                    Structure your response strictly using this clean format:
+                    1. A concise, empathetic 1-2 sentence direct answer.
+                    2. **Schedule & Instructions**: Clear bullet points (•) listing specific medicines, doses, food timing, or steps.
+                    3. **Precautions & Safety**: Clear bullet points (•) highlighting warnings, side effects, missed dose guidance, or food/drug interactions (if relevant).
+                    4. **Clinical Advice**: A brief 1-sentence reminder on when to contact their doctor.
+
+                    Formatting Rules:
+                    - Use bold titles with clean headers (e.g., **Schedule & Instructions**, **Precautions & Safety**).
+                    - Use bullet points (•) for each distinct point.
+                    - Keep sentences crisp, readable, and patient-friendly.
 
                     --- VERIFIED PATIENT CONTEXT ---
                     $contextBlock
@@ -138,14 +142,14 @@ class ChatRepository(private val context: Context) {
 
                 val request = GeminiApiClient.buildTextRequest(prompt, jsonOutput = false)
                 val response = GeminiApiClient.service.generateContent(
-                    model = "gemini-3.5-flash",
+                    model = "gemini-flash-latest",
                     apiKey = apiKey,
                     request = request
                 )
 
                 val replyText = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
                 if (!replyText.isNullOrBlank()) {
-                    Log.i(TAG, "[CHAT_PATH: GEMINI_SUCCESS] Successfully generated clinical response via Gemini 1.5 Flash")
+                    Log.i(TAG, "[CHAT_PATH: GEMINI_SUCCESS] Successfully generated clinical response via Gemini Flash")
                     return@withContext replyText.trim()
                 } else {
                     Log.w(TAG, "[CHAT_PATH: GEMINI_EMPTY] Gemini returned empty response text, falling back to local RAG")
@@ -195,15 +199,15 @@ class ChatRepository(private val context: Context) {
                     --- CONVERSATION TRANSCRIPT ---
                     $historyText
                     
-                    Provide the summary in 3 concise sections:
-                    1. **Discussion Overview** (topics covered)
-                    2. **Medication Schedule & Instructions**
-                    3. **Key Precautions & Action Items**
+                    Provide the summary in 3 concise sections with clear bold headers and bullets:
+                    1. **Discussion Overview** (topics reviewed)
+                    2. **Medication Schedule & Instructions** (medicines and timings)
+                    3. **Precautions & Next Steps** (warnings and doctor follow-up)
                 """.trimIndent()
 
                 val request = GeminiApiClient.buildTextRequest(prompt, jsonOutput = false)
                 val response = GeminiApiClient.service.generateContent(
-                    model = "gemini-3.5-flash",
+                    model = "gemini-flash-latest",
                     apiKey = apiKey,
                     request = request
                 )
@@ -230,17 +234,17 @@ class ChatRepository(private val context: Context) {
             .ifBlank { "• No critical medication interaction warnings identified." }
 
         """
-        **Session Clinical Summary**:
+        **Session Clinical Summary**
         
-        **1. Discussion Overview**:
-        • Reviewed ${medications.size} active medication regimen(s) and answered dosage queries.
+        **1. Discussion Overview**
+        • Reviewed ${medications.size} active medication regimen(s) and answered patient inquiries.
         
-        **2. Active Regimen & Schedule**:
+        **2. Active Regimen & Schedule**
         $medSummary
         
-        **3. Precautions & Actions**:
+        **3. Precautions & Actions**
         $conflictSummary
-        • Consult your healthcare provider before adjusting dosages.
+        • Consult your healthcare provider before adjusting any dosages.
         """.trimIndent()
     }
 
@@ -261,49 +265,84 @@ class ChatRepository(private val context: Context) {
                 val timing = med?.timing ?: "with your morning meal"
                 val dose = med?.dose ?: "500mg (1 tablet)"
                 """
-                Here are the details for **Metformin**:
+                Here are the clinical details for **Metformin**:
+
+                **Dosage & Administration**
                 • **Dose**: $dose
-                • **When to take**: $timing with a glass of water
-                • **Purpose**: Blood sugar control for Type 2 Diabetes
-                • **Tip**: Always take Metformin with food to minimize stomach upset.
+                • **Schedule**: $timing with a full glass of water
+                • **Clinical Purpose**: Regulating blood glucose levels for Type 2 Diabetes
+
+                **Precautions & Safety**
+                • Take strictly with or immediately after food to avoid stomach discomfort.
+                • Report persistent nausea or dizziness to your care team.
+
+                **Clinical Advice**
+                • Do not alter your dosage without consulting your prescribing physician.
                 """.trimIndent()
             }
 
             query.contains("lisinopril") || query.contains("amlodipine") || query.contains("blood pressure") || query.contains("bp") -> {
                 """
-                Regarding your blood pressure medications:
-                • **Lisinopril 10mg**: Take 1 tablet in the morning after breakfast.
+                Here is your blood pressure medication plan:
+
+                **Dosage & Administration**
+                • **Lisinopril 10mg**: Take 1 tablet every morning after breakfast.
                 • **Amlodipine 5mg**: Take 1 tablet at bedtime.
-                • **Safety Note**: These two medications work together to lower your blood pressure. Watch out for mild dizziness when standing up quickly.
-                • **Doctor Advice**: Monitor and record your blood pressure twice a week.
+
+                **Precautions & Safety**
+                • These medications work synergistically to lower blood pressure.
+                • Stand up gradually from sitting or lying down to prevent mild lightheadedness.
+
+                **Clinical Advice**
+                • Record your blood pressure readings twice weekly and share them at your next visit.
                 """.trimIndent()
             }
 
             query.contains("missed") || query.contains("forgot") -> {
                 """
-                If you missed a scheduled dose:
-                • **Take it as soon as you remember**, unless it is almost time for your next scheduled dose.
-                • **Never double up**: Do not take two doses at the same time to make up for a missed dose.
-                • If you have caretaker alert enabled, your caretaker will receive an update if a dose remains unconfirmed.
+                Guidance for a missed medication dose:
+
+                **Immediate Steps**
+                • **Take the missed dose as soon as you remember**, provided your next scheduled dose is not near.
+                • **Do not double up**: Never take two doses together to compensate for a missed dose.
+
+                **Precautions & Safety**
+                • If more than 4 hours have passed past your schedule, wait for the next dose.
+                • Your caregiver will receive an alert if critical doses remain unconfirmed.
+
+                **Clinical Advice**
+                • Reach out to your pharmacist or doctor if you miss more than one consecutive dose.
                 """.trimIndent()
             }
 
             query.contains("side effect") || query.contains("reaction") -> {
                 """
-                Here are general side effect guidelines for your active prescriptions:
-                • **Metformin**: Mild gastrointestinal effects (nausea, stomach upset) can occur; taking with food helps.
+                Side effect guidelines for your active prescriptions:
+
+                **Common Sensations**
+                • **Metformin**: Mild stomach upset or nausea; taking with food helps.
                 • **Lisinopril**: Dry persistent cough or mild dizziness.
-                • **Amlodipine**: Mild ankle or foot swelling.
-                • If you experience any swelling of the lips, tongue, or difficulty breathing, seek immediate medical care.
+                • **Amlodipine**: Mild peripheral swelling in ankles or feet.
+
+                **Precautions & Safety**
+                • If you experience swelling of lips, throat, or shortness of breath, seek emergency medical care.
+
+                **Clinical Advice**
+                • Notify your doctor if mild side effects persist past two weeks.
                 """.trimIndent()
             }
 
             query.contains("schedule") || query.contains("when") || query.contains("time") -> {
                 if (medications.isEmpty()) {
-                    "You currently have no scheduled medications in your list. You can scan a prescription or bill using the camera button."
+                    """
+                    **Medication Schedule**
+                    • No active medications registered yet in your MediBridge profile.
+                    • Tap the **Camera** button to scan a prescription or pharmacy receipt.
+                    """.trimIndent()
                 } else {
                     buildString {
-                        appendLine("Here is your current daily medication schedule:")
+                        appendLine("Here is your current daily medication schedule:\n")
+                        appendLine("**Active Regimen**")
                         medications.forEach { med ->
                             val sched = if (med.schedule.isNotEmpty()) {
                                 med.schedule.joinToString(", ") { "${it.slot} (${it.time})" }
@@ -312,28 +351,39 @@ class ChatRepository(private val context: Context) {
                             }
                             appendLine("• **${med.name}**: $sched ($med.dose)")
                         }
+                        appendLine("\n**Clinical Advice**")
+                        appendLine("• Take your doses at the same times each day for optimal adherence.")
                     }.trimEnd()
                 }
             }
 
             matchedMed != null -> {
                 """
-                **${matchedMed.name}**:
-                • **Dose**: ${matchedMed.dose}
+                Clinical information for **${matchedMed.name}**:
+
+                **Prescription Details**
+                • **Dose & Strength**: ${matchedMed.dose} (${matchedMed.strength})
                 • **Frequency**: ${matchedMed.frequency}
                 • **Instructions**: ${matchedMed.timing}
-                • **Status**: ${if (matchedMed.needsVerification) "Needs Verification" else "Verified"}
+                • **Verification Status**: ${if (matchedMed.needsVerification) "Needs Verification" else "Verified"}
+
+                **Clinical Advice**
+                • Review with your pharmacist or doctor before making changes to your regimen.
                 """.trimIndent()
             }
 
             else -> {
                 """
                 I've reviewed your active MediBridge health record:
-                • You have **${medications.size} active medication(s)** in your profile.
-                • You can ask me specific questions like:
-                  - *"When should I take Metformin?"*
-                  - *"What are the side effects of Lisinopril?"*
-                  - *"What should I do if I missed a dose?"*
+
+                **Summary**
+                • You have **${medications.size} active medication(s)** registered in your profile.
+
+                **Questions You Can Ask**
+                • *"When should I take Metformin?"*
+                • *"What are the side effects of Lisinopril?"*
+                • *"What should I do if I missed a dose?"*
+                • *"Show my complete daily schedule."*
                 """.trimIndent()
             }
         }

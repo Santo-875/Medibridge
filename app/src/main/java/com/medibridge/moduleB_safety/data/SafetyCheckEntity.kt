@@ -23,5 +23,9 @@ data class SafetyCheckEntity(
     val aiRecommendation: String,
     val crossVerified: Boolean,
     val reviewRecommended: Boolean,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val profileId: String = "default_me",
+    val updatedAt: Long = System.currentTimeMillis(),
+    val deletedAt: Long? = null,
+    val synced: Boolean = false
 )

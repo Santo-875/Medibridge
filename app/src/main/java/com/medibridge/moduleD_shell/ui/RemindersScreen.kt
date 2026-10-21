@@ -56,7 +56,7 @@ fun RemindersScreen(
     val db = remember { AppDatabase.getInstance(context) }
 
     val liveReminders by viewModel.reminders.collectAsState()
-    val displayReminders = if (liveReminders.isNotEmpty()) liveReminders else dummyReminders
+    val displayReminders = liveReminders
 
     val allAlerts by db.notificationDao().getAllNotifications().collectAsState(initial = emptyList())
     val alertsByMed: Map<String, NotificationEntity> = remember(allAlerts) {
@@ -72,8 +72,10 @@ fun RemindersScreen(
     val totalDoses = displayReminders.size
     val adherencePercent = if (takenCount + missedCount > 0) {
         (takenCount * 100) / (takenCount + missedCount)
+    } else if (totalDoses > 0 && takenCount > 0) {
+        (takenCount * 100) / totalDoses
     } else {
-        100
+        0
     }
 
     var selectedFilter by remember { mutableStateOf(ReminderFilter.ALL) }
@@ -174,7 +176,7 @@ fun RemindersScreen(
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = "$takenCount of $totalDoses scheduled doses taken today",
+                                    text = if (totalDoses > 0) "$takenCount of $totalDoses scheduled doses taken today" else "No doses scheduled for today",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -182,13 +184,13 @@ fun RemindersScreen(
 
                             Surface(
                                 shape = CircleShape,
-                                color = if (adherencePercent >= 80) StatusVerifiedBg else StatusReviewBg
+                                color = if (totalDoses == 0) MaterialTheme.colorScheme.surfaceVariant else if (adherencePercent >= 80) StatusVerifiedBg else StatusReviewBg
                             ) {
                                 Text(
-                                    text = "$adherencePercent%",
+                                    text = if (totalDoses > 0) "$adherencePercent%" else "0%",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (adherencePercent >= 80) StatusVerified else StatusReview,
+                                    color = if (totalDoses == 0) MaterialTheme.colorScheme.onSurfaceVariant else if (adherencePercent >= 80) StatusVerified else StatusReview,
                                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                                 )
                             }
@@ -198,7 +200,7 @@ fun RemindersScreen(
 
                         // Modern animated linear progress track
                         val animatedProgress by animateFloatAsState(
-                            targetValue = if (totalDoses > 0) (takenCount.toFloat() / totalDoses.toFloat()).coerceIn(0f, 1f) else 1f,
+                            targetValue = if (totalDoses > 0) (takenCount.toFloat() / totalDoses.toFloat()).coerceIn(0f, 1f) else 0f,
                             animationSpec = tween(700, easing = FastOutSlowInEasing),
                             label = "adherence_bar"
                         )
@@ -279,14 +281,24 @@ fun RemindersScreen(
             }
 
             // ── 3. Grouped Reminder Cards ──────────────────────────────────────
-            if (filteredReminders.isEmpty()) {
+            if (displayReminders.isEmpty()) {
+                item {
+                    EmptyState(
+                        icon = Icons.Default.AlarmOn,
+                        title = "No Reminders Scheduled",
+                        subtitle = "Prescribed medicines with active timings will appear here automatically. Take control of your daily health routine.",
+                        actionLabel = "Add Medicine",
+                        onActionClick = onAddMedication
+                    )
+                }
+            } else if (filteredReminders.isEmpty()) {
                 item {
                     EmptyState(
                         icon = Icons.Default.EventAvailable,
-                        title = "No Reminders Found",
-                        subtitle = "There are no reminders matching your current filter.",
-                        actionLabel = "Add Medicine",
-                        onActionClick = onAddMedication
+                        title = "No ${selectedFilter.label} Doses",
+                        subtitle = "There are no reminders in this category for today.",
+                        actionLabel = "View All Doses",
+                        onActionClick = { selectedFilter = ReminderFilter.ALL }
                     )
                 }
             } else {
@@ -787,10 +799,4 @@ data class ReminderItem(
 
 enum class ReminderStatus { PENDING, TAKEN, MISSED }
 
-val dummyReminders = listOf(
-    ReminderItem("r1", "Metformin",  "8:00 AM",  "1 tablet · 500mg",   ReminderStatus.TAKEN,  adherenceStreak = 5, adherencePercent = 100),
-    ReminderItem("r2", "Amlodipine", "9:00 AM",  "1 tablet · 5mg",     ReminderStatus.PENDING, adherenceStreak = 4, adherencePercent = 90),
-    ReminderItem("r3", "Lisinopril", "10:00 PM", "1 tablet · 10mg",    ReminderStatus.PENDING, adherenceStreak = 4, adherencePercent = 95),
-    ReminderItem("r4", "Vitamin D3", "9:00 AM",  "1 softgel · 1000IU", ReminderStatus.MISSED,  adherenceStreak = 2, adherencePercent = 60),
-    ReminderItem("r5", "Donepezil",  "8:00 PM",  "1 tablet · 5mg",     ReminderStatus.PENDING, adherenceStreak = 7, adherencePercent = 100)
-)
+val dummyReminders: List<ReminderItem> = emptyList()

@@ -56,4 +56,16 @@ interface NotificationDao {
         "ORDER BY timestamp DESC"
     )
     fun observeActiveAlertsForMed(medName: String): Flow<List<NotificationEntity>>
+
+    @Query("SELECT * FROM notifications WHERE synced = 0")
+    suspend fun getUnsyncedNotifications(): List<NotificationEntity>
+
+    @Query("SELECT * FROM notifications WHERE uuid = :uuid LIMIT 1")
+    suspend fun getNotificationByUuid(uuid: String): NotificationEntity?
+
+    @Query("UPDATE notifications SET synced = 1 WHERE uuid = :uuid")
+    suspend fun markSynced(uuid: String)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertNotifications(notifications: List<NotificationEntity>)
 }

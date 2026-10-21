@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.medibridge.core.db.AppDatabase
 import com.medibridge.core.db.NotificationEntity
+import com.medibridge.core.model.MedicationConflict
 import com.medibridge.core.model.MedicationObject
 import com.medibridge.core.model.fromEntity
 import com.medibridge.core.theme.*
@@ -49,23 +50,37 @@ fun HomeScreen(
     onReminderClick: () -> Unit,
     onSafetyClick: () -> Unit = {},
     onRecordClick: () -> Unit = {},
+    onRecordingsListClick: () -> Unit = {},
+    onMedicinesClick: () -> Unit = {},
+    onSettingsClick: () -> Unit = {},
     onOpenDrawer: () -> Unit = {}
 ) {
     val context = LocalContext.current
-    val prefs = remember { context.getSharedPreferences("medibridge_prefs", Context.MODE_PRIVATE) }
-    val patientName by remember { mutableStateOf(prefs.getString("patient_name", "Alex") ?: "Alex") }
+    val coroutineScope = rememberCoroutineScope()
+    val sessionManager = remember { com.medibridge.core.session.UserSessionManager.getInstance(context) }
+    val activeProfileId by sessionManager.activeProfileIdFlow.collectAsState(initial = com.medibridge.core.session.UserSessionManager.DEFAULT_PROFILE_ID)
 
     val db = remember { AppDatabase.getInstance(context) }
-    val roomMedEntities by db.medicationDao().getAllMedications().collectAsState(initial = emptyList())
+    val filteredMeds by db.medicationDao().getMedicationsForProfile(activeProfileId).collectAsState(initial = emptyList())
+    val allDbMeds by db.medicationDao().getAllMedications().collectAsState(initial = emptyList())
+    val roomMedEntities = remember(filteredMeds, allDbMeds) {
+        if (filteredMeds.isNotEmpty()) filteredMeds else allDbMeds
+    }
     val medications = remember(roomMedEntities) {
         roomMedEntities.map { it.fromEntity() }
     }
+    val allDoseLogs by db.doseLogDao().getDoseLogsForProfile(activeProfileId).collectAsState(initial = emptyList())
     val unreadNotificationCount by db.notificationDao().getUnreadCount().collectAsState(initial = 0)
     val scheduleViewModel: ScheduleViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
     val todayReminders by scheduleViewModel.reminders.collectAsState(initial = emptyList())
 
+    val syncRepository = remember { com.medibridge.core.sync.SyncRepository.getInstance(context) }
+    val syncState by syncRepository.syncState.collectAsState()
+    var isDeviceOnline by remember { mutableStateOf(syncRepository.isOnline()) }
+
     var showNotificationSheet by remember { mutableStateOf(false) }
     var selectedSlot by remember { mutableStateOf(DaySlot.MORNING) }
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
 
     // Dynamic greeting based on current time
     val currentHour = remember { Calendar.getInstance().get(Calendar.HOUR_OF_DAY) }
@@ -84,6 +99,11 @@ fun HomeScreen(
     }
     val hasConflicts = conflictingMeds.isNotEmpty()
     val firstConflict = conflictingMeds.firstOrNull()?.conflicts?.firstOrNull()
+    val allAlerts = remember(medications) {
+        medications.flatMap { med ->
+            med.conflicts.map { conflict -> Pair(med, conflict) }
+        }
+    }
 
     // Next dose determination
     val nextMed = medications.firstOrNull()
@@ -91,118 +111,255 @@ fun HomeScreen(
 
     // Adherence calculation
     val takenCount = todayReminders.count { it.status == ReminderStatus.TAKEN }
-    val totalScheduled = if (todayReminders.isNotEmpty()) todayReminders.size else medications.size.coerceAtLeast(1)
-    val adherencePercent = if (totalScheduled > 0) ((takenCount.toFloat() / totalScheduled.toFloat()) * 100).toInt().coerceIn(0, 100) else 100
+    val totalScheduled = if (todayReminders.isNotEmpty()) todayReminders.size else medications.size
+    val adherencePercent = if (totalScheduled > 0) ((takenCount.toFloat() / totalScheduled.toFloat()) * 100).toInt().coerceIn(0, 100) else 0
 
-    Scaffold(
-        topBar = {
-            Surface(
-                color = MaterialTheme.colorScheme.background,
-                modifier = Modifier.fillMaxWidth()
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        gesturesEnabled = true,
+        drawerContent = {
+            ModalDrawerSheet(
+                drawerShape = RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp),
+                drawerContainerColor = MaterialTheme.colorScheme.surface,
+                modifier = Modifier.width(310.dp)
             ) {
+                Spacer(modifier = Modifier.height(18.dp))
+
+                // Brand Header
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 20.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        modifier = Modifier.size(44.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.HealthAndSafety,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
                     Column {
                         Text(
-                            text = "$greeting, $patientName",
-                            style = MaterialTheme.typography.titleLarge,
+                            text = "MediBridge",
+                            style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onBackground
+                            color = MaterialTheme.colorScheme.onSurface
                         )
-                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = formattedDate,
-                            style = MaterialTheme.typography.bodyMedium,
+                            text = "Clinical Health Companion",
+                            style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-
-                    BadgedIconButton(
-                        icon = Icons.Default.Notifications,
-                        badgeCount = unreadNotificationCount,
-                        onClick = { showNotificationSheet = true },
-                        contentDescription = "Notifications"
-                    )
                 }
+
+                Spacer(modifier = Modifier.height(14.dp))
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Text(
+                    text = "CLINICAL ROUTINE",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
+                )
+
+                NavigationDrawerItem(
+                    label = { Text("Schedule & Reminders", fontWeight = FontWeight.Medium) },
+                    icon = { Icon(Icons.Default.Alarm, contentDescription = null) },
+                    selected = false,
+                    onClick = {
+                        coroutineScope.launch { drawerState.close() }
+                        onReminderClick()
+                    },
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                )
+
+                NavigationDrawerItem(
+                    label = { Text("Medication Safety", fontWeight = FontWeight.Medium) },
+                    icon = { Icon(Icons.Default.Shield, contentDescription = null) },
+                    selected = false,
+                    onClick = {
+                        coroutineScope.launch { drawerState.close() }
+                        onSafetyClick()
+                    },
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                )
+
+                NavigationDrawerItem(
+                    label = { Text("Consultation Recordings", fontWeight = FontWeight.Medium) },
+                    icon = { Icon(Icons.Default.Headphones, contentDescription = null) },
+                    selected = false,
+                    onClick = {
+                        coroutineScope.launch { drawerState.close() }
+                        onRecordingsListClick()
+                    },
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Text(
+                    text = "MANAGEMENT & AI",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
+                )
+
+                NavigationDrawerItem(
+                    label = { Text("Medicines & Doses", fontWeight = FontWeight.Medium) },
+                    icon = { Icon(Icons.Default.Medication, contentDescription = null) },
+                    selected = false,
+                    onClick = {
+                        coroutineScope.launch { drawerState.close() }
+                        onMedicinesClick()
+                    },
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                )
+
+                NavigationDrawerItem(
+                    label = { Text("Scan Prescription", fontWeight = FontWeight.Medium) },
+                    icon = { Icon(Icons.Default.DocumentScanner, contentDescription = null) },
+                    selected = false,
+                    onClick = {
+                        coroutineScope.launch { drawerState.close() }
+                        onScannerClick()
+                    },
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                )
+
+                NavigationDrawerItem(
+                    label = { Text("Voice Consultation", fontWeight = FontWeight.Medium) },
+                    icon = { Icon(Icons.Default.Mic, contentDescription = null) },
+                    selected = false,
+                    onClick = {
+                        coroutineScope.launch { drawerState.close() }
+                        onRecordClick()
+                    },
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                )
+
+                NavigationDrawerItem(
+                    label = { Text("Medi AI Clinical Chat", fontWeight = FontWeight.Medium) },
+                    icon = { Icon(Icons.Default.AutoAwesome, contentDescription = null) },
+                    selected = false,
+                    onClick = {
+                        coroutineScope.launch { drawerState.close() }
+                        onChatbotClick()
+                    },
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
+                Spacer(modifier = Modifier.height(12.dp))
+
+                NavigationDrawerItem(
+                    label = { Text("Settings & Profile", fontWeight = FontWeight.Medium) },
+                    icon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                    selected = false,
+                    onClick = {
+                        coroutineScope.launch { drawerState.close() }
+                        onSettingsClick()
+                    },
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                )
             }
-        },
-        containerColor = MaterialTheme.colorScheme.background
-    ) { innerPadding ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            // ── 1. Safety Alert Banner (Only when conflict exists) ─────────────
-            if (hasConflicts && firstConflict != null) {
-                item {
-                    Surface(
+        }
+    ) {
+        Scaffold(
+            topBar = {
+                Surface(
+                    color = MaterialTheme.colorScheme.background,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable(onClick = onSafetyClick),
-                        shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.85f),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.3f))
+                            .padding(start = 12.dp, end = 20.dp, top = 12.dp, bottom = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
                         ) {
-                            Surface(
-                                shape = CircleShape,
-                                color = MaterialTheme.colorScheme.error,
+                            IconButton(
+                                onClick = { coroutineScope.launch { drawerState.open() } },
                                 modifier = Modifier.size(40.dp)
                             ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.Warning,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onError,
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                }
+                                Icon(
+                                    imageVector = Icons.Default.Menu,
+                                    contentDescription = "Open side menu",
+                                    tint = MaterialTheme.colorScheme.onBackground
+                                )
                             }
 
-                            Spacer(modifier = Modifier.width(14.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
 
-                            Column(modifier = Modifier.weight(1f)) {
+                            Column {
                                 Text(
-                                    text = "Medication Alert",
-                                    style = MaterialTheme.typography.titleMedium,
+                                    text = greeting,
+                                    style = MaterialTheme.typography.titleLarge,
                                     fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.error
+                                    color = MaterialTheme.colorScheme.onBackground
                                 )
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
-                                    text = firstConflict.detail.ifEmpty { "Potential interaction detected between prescribed medicines." },
+                                    text = formattedDate,
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
+                        }
 
-                            Spacer(modifier = Modifier.width(8.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            SyncIndicator(
+                                syncState = syncState,
+                                isOnline = isDeviceOnline,
+                                onClick = {
+                                    isDeviceOnline = syncRepository.isOnline()
+                                    syncRepository.scheduleSyncDebounced(0L)
+                                }
+                            )
 
-                            Text(
-                                text = "Review",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.error
+                            BadgedIconButton(
+                                icon = Icons.Default.Notifications,
+                                badgeCount = unreadNotificationCount,
+                                onClick = { showNotificationSheet = true },
+                                contentDescription = "Notifications"
                             )
                         }
                     }
                 }
-            }
+            },
+            containerColor = MaterialTheme.colorScheme.background
+        ) { innerPadding ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
 
-            // ── 2. First-Launch Empty State OR Next Dose Hero Card ─────────────
+            // ── 1. Next Dose Hero Card OR Empty State ─────────────────────────
             if (medications.isEmpty()) {
                 item {
                     EmptyState(
@@ -239,7 +396,7 @@ fun HomeScreen(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(18.dp)
+                                .padding(20.dp)
                         ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -266,28 +423,34 @@ fun HomeScreen(
                                 )
                             }
 
-                            Spacer(modifier = Modifier.height(14.dp))
+                            Spacer(modifier = Modifier.height(16.dp))
 
                             Text(
-                                text = nextMed?.name ?: "Metformin",
+                                text = nextMed?.name ?: "Scheduled Medicine",
                                 style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
 
-                            Spacer(modifier = Modifier.height(2.dp))
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            val doseDetails = listOfNotNull(
+                                nextMed?.strength?.takeIf { it.isNotBlank() },
+                                nextMed?.dose?.takeIf { it.isNotBlank() },
+                                nextMed?.timing?.takeIf { it.isNotBlank() }
+                            ).joinToString(" • ").ifEmpty { "1 dose • As scheduled" }
 
                             Text(
-                                text = "${nextMed?.strength ?: "500mg"} • ${nextMed?.dose ?: "1 tablet"} • ${nextMed?.timing ?: "After breakfast"}",
+                                text = doseDetails,
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
 
-                            Spacer(modifier = Modifier.height(18.dp))
+                            Spacer(modifier = Modifier.height(20.dp))
 
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 PrimaryButton(
@@ -321,9 +484,10 @@ fun HomeScreen(
             // ── 3. Quick Actions ───────────────────────────────────────────────
             item {
                 SectionHeader(title = "Quick Actions")
+                Spacer(modifier = Modifier.height(8.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     QuickActionCard(
                         title = "Scan",
@@ -349,6 +513,28 @@ fun HomeScreen(
                 }
             }
 
+            // ── 3. Medication Alerts (Listed in middle section) ────────────────
+            if (allAlerts.isNotEmpty()) {
+                item {
+                    SectionHeader(
+                        title = "Medication Alerts",
+                        badgeCount = allAlerts.size,
+                        actionLabel = "Safety Center",
+                        onActionClick = onSafetyClick
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        allAlerts.forEach { (med, conflict) ->
+                            MedicationAlertCard(
+                                medicine = med,
+                                conflict = conflict,
+                                onClick = onSafetyClick
+                            )
+                        }
+                    }
+                }
+            }
+
             // ── 4. Today's Timeline ───────────────────────────────────────────
             item {
                 SectionHeader(
@@ -356,7 +542,7 @@ fun HomeScreen(
                     actionLabel = "View All",
                     onActionClick = onReminderClick
                 )
-
+                Spacer(modifier = Modifier.height(8.dp))
                 SegmentedToggle(
                     items = listOf(DaySlot.MORNING, DaySlot.AFTERNOON, DaySlot.NIGHT),
                     selectedItem = selectedSlot,
@@ -407,14 +593,17 @@ fun HomeScreen(
 
             // ── 5. Weekly Adherence 7-Day Graph ───────────────────────────────
             item {
+                SectionHeader(title = "Weekly Overview")
+                Spacer(modifier = Modifier.height(8.dp))
                 WeeklyAdherenceGraph(
                     todayTakenCount = takenCount,
+                    totalScheduledToday = totalScheduled,
                     todayAdherencePercent = adherencePercent
                 )
             }
 
             item {
-                Spacer(modifier = Modifier.height(72.dp))
+                Spacer(modifier = Modifier.height(80.dp))
             }
         }
     }
@@ -489,6 +678,7 @@ fun HomeScreen(
             }
         }
     }
+    }
 }
 
 @Composable
@@ -509,7 +699,7 @@ private fun QuickActionCard(
 
     Surface(
         modifier = modifier
-            .defaultMinSize(minHeight = 98.dp)
+            .defaultMinSize(minHeight = 108.dp)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
@@ -527,14 +717,14 @@ private fun QuickActionCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 12.dp),
+                .padding(horizontal = 14.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.Start
         ) {
             Surface(
                 shape = RoundedCornerShape(10.dp),
                 color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
-                modifier = Modifier.size(36.dp)
+                modifier = Modifier.size(40.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
@@ -545,7 +735,7 @@ private fun QuickActionCard(
                     )
                 }
             }
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(12.dp))
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleSmall,
@@ -576,6 +766,7 @@ private data class DayAdherence(
 @Composable
 private fun WeeklyAdherenceGraph(
     todayTakenCount: Int,
+    totalScheduledToday: Int,
     todayAdherencePercent: Int,
     modifier: Modifier = Modifier
 ) {
@@ -592,15 +783,16 @@ private fun WeeklyAdherenceGraph(
         else -> 0
     }
 
+    // Reset from mock fake data: initial state has no fake historical numbers
     val days = remember(todayAdherencePercent, todayIndex) {
         listOf(
-            DayAdherence("Mon", "M", if (todayIndex == 0) todayAdherencePercent else 100, todayIndex == 0),
-            DayAdherence("Tue", "T", if (todayIndex == 1) todayAdherencePercent else 100, todayIndex == 1),
-            DayAdherence("Wed", "W", if (todayIndex == 2) todayAdherencePercent else 85, todayIndex == 2),
-            DayAdherence("Thu", "T", if (todayIndex == 3) todayAdherencePercent else 100, todayIndex == 3),
-            DayAdherence("Fri", "F", if (todayIndex == 4) todayAdherencePercent else 100, todayIndex == 4),
-            DayAdherence("Sat", "S", if (todayIndex == 5) todayAdherencePercent else 70, todayIndex == 5),
-            DayAdherence("Sun", "S", if (todayIndex == 6) todayAdherencePercent else 90, todayIndex == 6)
+            DayAdherence("Mon", "M", if (todayIndex == 0) todayAdherencePercent else 0, todayIndex == 0),
+            DayAdherence("Tue", "T", if (todayIndex == 1) todayAdherencePercent else 0, todayIndex == 1),
+            DayAdherence("Wed", "W", if (todayIndex == 2) todayAdherencePercent else 0, todayIndex == 2),
+            DayAdherence("Thu", "T", if (todayIndex == 3) todayAdherencePercent else 0, todayIndex == 3),
+            DayAdherence("Fri", "F", if (todayIndex == 4) todayAdherencePercent else 0, todayIndex == 4),
+            DayAdherence("Sat", "S", if (todayIndex == 5) todayAdherencePercent else 0, todayIndex == 5),
+            DayAdherence("Sun", "S", if (todayIndex == 6) todayAdherencePercent else 0, todayIndex == 6)
         )
     }
 
@@ -634,7 +826,15 @@ private fun WeeklyAdherenceGraph(
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "${activeDay.dayKey}: ${activeDay.percent}% completed",
+                        text = if (activeDay.isToday && activeDay.percent > 0) {
+                            "Today: ${activeDay.percent}% completed"
+                        } else if (activeDay.isToday) {
+                            "Today: Ready to track"
+                        } else if (activeDay.percent > 0) {
+                            "${activeDay.dayKey}: ${activeDay.percent}% completed"
+                        } else {
+                            "${activeDay.dayKey}: No record"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -649,7 +849,7 @@ private fun WeeklyAdherenceGraph(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "🔥 5-day streak",
+                            text = if (todayTakenCount > 0) "🔥 Active today" else "🎯 Weekly Goal",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary
@@ -671,7 +871,7 @@ private fun WeeklyAdherenceGraph(
                 days.forEach { item ->
                     val isSelected = (selectedDay == item) || (selectedDay == null && item.isToday)
                     val animatedFraction by animateFloatAsState(
-                        targetValue = (item.percent / 100f).coerceIn(0.14f, 1f),
+                        targetValue = if (item.percent > 0) (item.percent / 100f).coerceIn(0.14f, 1f) else 0f,
                         animationSpec = tween(600, easing = FastOutSlowInEasing),
                         label = "bar_anim_${item.dayKey}"
                     )
@@ -711,19 +911,21 @@ private fun WeeklyAdherenceGraph(
                                 ),
                             contentAlignment = Alignment.BottomCenter
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .fillMaxHeight(animatedFraction)
-                                    .clip(RoundedCornerShape(14.dp))
-                                    .background(
-                                        when {
-                                            item.isToday -> MaterialTheme.colorScheme.primary
-                                            item.percent >= 80 -> StatusVerified
-                                            else -> StatusReview
-                                        }
-                                    )
-                            )
+                            if (animatedFraction > 0f) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .fillMaxHeight(animatedFraction)
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(
+                                            when {
+                                                item.isToday -> MaterialTheme.colorScheme.primary
+                                                item.percent >= 80 -> StatusVerified
+                                                else -> StatusReview
+                                            }
+                                        )
+                                )
+                            }
                         }
 
                         Spacer(modifier = Modifier.height(6.dp))
@@ -752,14 +954,18 @@ private fun WeeklyAdherenceGraph(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
-                        imageVector = Icons.Default.CheckCircle,
+                        imageVector = if (todayTakenCount > 0) Icons.Default.CheckCircle else Icons.Default.Info,
                         contentDescription = null,
-                        tint = StatusVerified,
+                        tint = if (todayTakenCount > 0) StatusVerified else MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "22 of 24 doses taken on time this week. Best: Morning routine.",
+                        text = when {
+                            todayTakenCount > 0 -> "$todayTakenCount of $totalScheduledToday scheduled doses taken today. Keep it up!"
+                            totalScheduledToday > 0 -> "$totalScheduledToday dose${if (totalScheduledToday > 1) "s" else ""} scheduled today. Mark doses as you take them."
+                            else -> "No doses scheduled yet. Add medications to track your weekly adherence."
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -768,3 +974,90 @@ private fun WeeklyAdherenceGraph(
         }
     }
 }
+
+@Composable
+private fun MedicationAlertCard(
+    medicine: MedicationObject,
+    conflict: MedicationConflict,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+        border = BorderStroke(1.dp, StatusConflict.copy(alpha = 0.35f))
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f),
+                border = BorderStroke(1.dp, StatusConflict.copy(alpha = 0.35f)),
+                modifier = Modifier.size(42.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = StatusConflict,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = medicine.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        border = BorderStroke(0.8.dp, StatusConflict.copy(alpha = 0.4f))
+                    ) {
+                        Text(
+                            text = conflict.type.replace('_', ' ').uppercase(),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = StatusConflict,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(3.dp))
+
+                Text(
+                    text = conflict.detail.ifEmpty { "Potential contraindication or safety flag detected." },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            Icon(
+                imageVector = Icons.Default.ChevronRight,
+                contentDescription = "Review safety",
+                tint = StatusConflict,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}
+

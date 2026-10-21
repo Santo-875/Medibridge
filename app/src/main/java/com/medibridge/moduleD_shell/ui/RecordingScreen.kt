@@ -60,7 +60,8 @@ import com.medibridge.moduleD_shell.ui.components.*
 @Composable
 fun RecordingScreen(
     onBack: () -> Unit = {},
-    onNavigateToReminders: () -> Unit = {}
+    onNavigateToReminders: () -> Unit = {},
+    onNavigateToRecordingsList: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope   = rememberCoroutineScope()
@@ -378,6 +379,24 @@ fun RecordingScreen(
                     }
                 },
                 actions = {
+                    FilledTonalButton(
+                        onClick = onNavigateToRecordingsList,
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier.padding(end = 4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.History,
+                            contentDescription = "Past Recordings",
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "Past Recordings",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
                     // Voice Storage icon
                     IconButton(onClick = { showStorageDialog = true }) {
                         BadgedBox(

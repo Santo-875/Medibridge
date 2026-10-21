@@ -1,5 +1,6 @@
 package com.medibridge.moduleD_shell.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -30,28 +31,26 @@ fun StatusChip(
 ) {
     val isDark = isSystemInDarkTheme()
 
-    val (bg, fg, icon: ImageVector, defaultLabel) = when (status) {
+    val (fg, icon: ImageVector, defaultLabel) = when (status) {
         StatusType.Verified -> {
-            val background = if (isDark) StatusVerifiedBgDark else StatusVerifiedBg
             val foreground = if (isDark) StatusVerifiedDark else StatusVerified
-            Quadruple(background, foreground, Icons.Default.CheckCircle, "Verified")
+            Triple(foreground, Icons.Default.CheckCircle, "Verified")
         }
         StatusType.Review -> {
-            val background = if (isDark) StatusReviewBgDark else StatusReviewBg
             val foreground = if (isDark) StatusReviewDark else StatusReview
-            Quadruple(background, foreground, Icons.Default.Warning, "Review")
+            Triple(foreground, Icons.Default.Warning, "Review")
         }
         StatusType.Conflict -> {
-            val background = if (isDark) StatusConflictBgDark else StatusConflictBg
             val foreground = if (isDark) StatusConflictDark else StatusConflict
-            Quadruple(background, foreground, Icons.Default.ErrorOutline, "Conflict")
+            Triple(foreground, Icons.Default.ErrorOutline, "Conflict")
         }
     }
 
     Surface(
         modifier = modifier,
         shape = CircleShape,
-        color = bg
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+        border = BorderStroke(1.dp, fg.copy(alpha = 0.35f))
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -73,5 +72,3 @@ fun StatusChip(
         }
     }
 }
-
-private data class Quadruple<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)

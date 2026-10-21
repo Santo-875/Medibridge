@@ -57,7 +57,7 @@ class PrivacySummaryService(
         try {
             val request = GeminiApiClient.buildTextRequest(prompt, jsonOutput = true)
             val response = geminiService.generateContent(
-                model = "gemini-1.5-flash",
+                model = "gemini-flash-latest",
                 apiKey = apiKey,
                 request = request
             )
