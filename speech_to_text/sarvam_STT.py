@@ -37,7 +37,7 @@ def transcribe_and_translate_audio(audio_path):
         file_bytes = f.read()
 
     res = None
-    for model_name in ["saarika:v2.5", "saaras:v3"]:
+    for model_name in ["saaras:v4", "saaras:v3"]:
         files = {"file": (filename, file_bytes, mime)}
         data = {"model": model_name, "language_code": "ta-IN"}
         try:

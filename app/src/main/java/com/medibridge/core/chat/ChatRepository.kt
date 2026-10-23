@@ -154,13 +154,13 @@ class ChatRepository(private val context: Context) {
                 val request = GeminiApiClient.buildTextRequest(prompt, jsonOutput = false)
                 val response = try {
                     GeminiApiClient.service.generateContent(
-                        model = "gemini-3.5-flash",
+                        model = "gemini-3.6-flash",
                         apiKey = apiKey,
                         request = request
                     )
                 } catch (e1: Exception) {
                     GeminiApiClient.service.generateContent(
-                        model = "gemini-3.1-flash-lite",
+                        model = "gemini-3.8-flash",
                         apiKey = apiKey,
                         request = request
                     )
@@ -235,13 +235,13 @@ class ChatRepository(private val context: Context) {
                 val request = GeminiApiClient.buildTextRequest(prompt, jsonOutput = false)
                 val response = try {
                     GeminiApiClient.service.generateContent(
-                        model = "gemini-3.5-flash",
+                        model = "gemini-3.6-flash",
                         apiKey = apiKey,
                         request = request
                     )
                 } catch (e1: Exception) {
                     GeminiApiClient.service.generateContent(
-                        model = "gemini-3.1-flash-lite",
+                        model = "gemini-3.8-flash",
                         apiKey = apiKey,
                         request = request
                     )

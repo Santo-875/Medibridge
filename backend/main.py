@@ -431,13 +431,17 @@ GUIDELINES:
         try:
             from google import genai
             client = genai.Client(api_key=gemini_key)
-            resp = await asyncio.to_thread(
-                client.models.generate_content,
-                model="gemini-3.5-flash",
-                contents=prompt
-            )
-            if resp and resp.text and resp.text.strip():
-                return ChatResponse(reply=resp.text.strip(), source="gemini")
+            for gmodel in ["gemini-3.6-flash", "gemini-3.8-flash"]:
+                try:
+                    resp = await asyncio.to_thread(
+                        client.models.generate_content,
+                        model=gmodel,
+                        contents=prompt
+                    )
+                    if resp and resp.text and resp.text.strip():
+                        return ChatResponse(reply=resp.text.strip(), source="gemini")
+                except Exception:
+                    continue
         except Exception as e:
             logging.warning(f"Gemini chat failed: {e}")
 

@@ -93,13 +93,13 @@ class PatientSummaryService(
             val request = GeminiApiClient.buildTextRequest(prompt, jsonOutput = false)
             val response = try {
                 geminiService.generateContent(
-                    model = "gemini-3.5-flash",
+                    model = "gemini-3.6-flash",
                     apiKey = apiKey,
                     request = request
                 )
             } catch (e1: Exception) {
                 geminiService.generateContent(
-                    model = "gemini-3.1-flash-lite",
+                    model = "gemini-3.8-flash",
                     apiKey = apiKey,
                     request = request
                 )
