@@ -594,15 +594,31 @@ RECEIPT TEXT:
 {raw_text}
 """
 
-    response = client.chat.completions.create(
-        model=model_name,
-        messages=[
-            {"role": "system", "content": "You are a clinical document parser that outputs only structured JSON."},
-            {"role": "user", "content": prompt}
-        ],
-        response_format={"type": "json_object"},
-        temperature=0.0
-    )
+    models_to_try = [model_name]
+    for alt in ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"]:
+        if alt not in models_to_try:
+            models_to_try.append(alt)
+
+    response = None
+    last_err = None
+    for m in models_to_try:
+        try:
+            response = client.chat.completions.create(
+                model=m,
+                messages=[
+                    {"role": "system", "content": "You are a clinical document parser that outputs only structured JSON."},
+                    {"role": "user", "content": prompt}
+                ],
+                response_format={"type": "json_object"},
+                max_completion_tokens=4096,
+                temperature=0.0
+            )
+            break
+        except Exception as e:
+            last_err = e
+
+    if response is None:
+        raise last_err or Exception("All Groq models failed to structure prescription JSON")
 
     header_data = json.loads(response.choices[0].message.content)
 
