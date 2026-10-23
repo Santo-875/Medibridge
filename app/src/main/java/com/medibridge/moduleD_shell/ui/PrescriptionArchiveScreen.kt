@@ -32,6 +32,8 @@ import com.medibridge.moduleD_shell.ui.components.EmptyState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import android.widget.Toast
+import com.medibridge.core.export.HealthSummaryExporter
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -48,6 +50,52 @@ fun PrescriptionArchiveScreen(
     val prescriptions by db.prescriptionRecordDao().getAllPrescriptions().collectAsState(initial = emptyList())
     var selectedRecord by remember { mutableStateOf<PrescriptionRecordEntity?>(null) }
     val gson = remember { Gson() }
+    var showExportDialog by remember { mutableStateOf(false) }
+    var exportPatientName by remember { mutableStateOf("Meena") }
+    var exportAllergiesText by remember { mutableStateOf("No known drug allergies") }
+    var isGeneratingExport by remember { mutableStateOf(false) }
+
+    fun shareHealthSummaryPdf() {
+        isGeneratingExport = true
+        scope.launch {
+            try {
+                val allergiesList = exportAllergiesText.split(",").map { it.trim() }.filter { it.isNotBlank() }
+                val report = withContext(Dispatchers.IO) {
+                    HealthSummaryExporter.buildReport(context, exportPatientName, allergiesList)
+                }
+                val pdfFile = withContext(Dispatchers.IO) {
+                    HealthSummaryExporter.generatePdf(context, report)
+                }
+                HealthSummaryExporter.shareFile(context, pdfFile, "application/pdf", "Share Doctor-Ready Health Summary")
+                showExportDialog = false
+            } catch (e: Exception) {
+                Toast.makeText(context, "Export failed: ${e.message}", Toast.LENGTH_SHORT).show()
+            } finally {
+                isGeneratingExport = false
+            }
+        }
+    }
+
+    fun shareHealthSummaryJson() {
+        isGeneratingExport = true
+        scope.launch {
+            try {
+                val allergiesList = exportAllergiesText.split(",").map { it.trim() }.filter { it.isNotBlank() }
+                val report = withContext(Dispatchers.IO) {
+                    HealthSummaryExporter.buildReport(context, exportPatientName, allergiesList)
+                }
+                val jsonFile = withContext(Dispatchers.IO) {
+                    HealthSummaryExporter.generateJson(context, report)
+                }
+                HealthSummaryExporter.shareFile(context, jsonFile, "application/json", "Export Health Summary Data")
+                showExportDialog = false
+            } catch (e: Exception) {
+                Toast.makeText(context, "Export failed: ${e.message}", Toast.LENGTH_SHORT).show()
+            } finally {
+                isGeneratingExport = false
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -92,6 +140,13 @@ fun PrescriptionArchiveScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { showExportDialog = true }) {
+                        Icon(
+                            imageVector = Icons.Default.Share,
+                            contentDescription = "Export Doctor-Ready Summary",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
                     IconButton(onClick = onNavigateToScanner) {
                         Icon(
                             imageVector = Icons.Default.AddAPhoto,
@@ -132,6 +187,84 @@ fun PrescriptionArchiveScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 contentPadding = PaddingValues(vertical = 12.dp)
             ) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(18.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                        ),
+                        border = BorderStroke(1.2.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f))
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.HealthAndSafety,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onPrimary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Column {
+                                    Text(
+                                        text = "Doctor-Ready Health Summary",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = "Export active medicines, allergies & safety alerts before your appointment",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+
+                            Spacer(Modifier.height(14.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Button(
+                                    onClick = { shareHealthSummaryPdf() },
+                                    modifier = Modifier.weight(1f),
+                                    enabled = !isGeneratingExport
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.PictureAsPdf,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Export PDF")
+                                }
+
+                                OutlinedButton(
+                                    onClick = { showExportDialog = true },
+                                    modifier = Modifier.weight(1f),
+                                    enabled = !isGeneratingExport
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Tune,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Customize")
+                                }
+                            }
+                        }
+                    }
+                }
+
                 items(prescriptions, key = { it.id }) { record ->
                     val medList: List<Map<String, Any?>> = remember(record.medicationsJson) {
                         try {
@@ -406,5 +539,85 @@ fun PrescriptionArchiveScreen(
                 }
             }
         }
+    }
+
+    if (showExportDialog) {
+        AlertDialog(
+            onDismissRequest = { if (!isGeneratingExport) showExportDialog = false },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.HealthAndSafety,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(28.dp)
+                )
+            },
+            title = {
+                Text("Doctor-Ready Health Summary", fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "Generates a comprehensive clinical summary report connecting your active medications, verified allergies, recent consultation notes, and unresolved safety warnings.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    OutlinedTextField(
+                        value = exportPatientName,
+                        onValueChange = { exportPatientName = it },
+                        label = { Text("Patient Name") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp)
+                    )
+
+                    OutlinedTextField(
+                        value = exportAllergiesText,
+                        onValueChange = { exportAllergiesText = it },
+                        label = { Text("Known Allergies (comma-separated)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp)
+                    )
+
+                    if (isGeneratingExport) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center,
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Compiling clinical data...", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { shareHealthSummaryPdf() },
+                    enabled = !isGeneratingExport
+                ) {
+                    Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Share PDF")
+                }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(
+                        onClick = { shareHealthSummaryJson() },
+                        enabled = !isGeneratingExport
+                    ) {
+                        Text("Export JSON")
+                    }
+                    TextButton(
+                        onClick = { showExportDialog = false },
+                        enabled = !isGeneratingExport
+                    ) {
+                        Text("Cancel")
+                    }
+                }
+            }
+        )
     }
 }
