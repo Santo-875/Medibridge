@@ -1,5 +1,6 @@
 import json
 import os
+import logging
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -40,57 +41,40 @@ def generate_medical_summary(transcript: str) -> dict:
             """
 
             response = client.models.generate_content(
-                model="gemini-3.5-flash",
+                model="gemini-2.5-flash",
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
                     temperature=0.1,
                 ),
             )
-            return json.loads(response.text)
+            data = json.loads(response.text)
+            data["summary_failed"] = False
+            return data
         except Exception as e:
-            print(f"Gemini summary generation failed: {e}")
-
-    # Fallback structured clinical summary
-    return {
-        "chief_complaints": ["Elevated blood pressure", "Mild cognitive decline"],
-        "symptoms": ["Occasional dizziness", "Memory lapse"],
-        "diagnosis": "Essential Hypertension & Mild Cognitive Impairment",
-        "medications": [
-            {
-                "name": "Lisinopril",
-                "dosage": "10mg",
-                "frequency": "Once daily (Morning)",
-                "duration": "30 days",
-                "instructions": "Take 1 tablet every morning with food"
-            },
-            {
-                "name": "Amlodipine",
-                "dosage": "5mg",
-                "frequency": "Once daily (Night)",
-                "duration": "30 days",
-                "instructions": "Take 1 tablet before bedtime"
-            },
-            {
-                "name": "Donepezil",
-                "dosage": "5mg",
-                "frequency": "Once daily (Night)",
-                "duration": "30 days",
-                "instructions": "Take at night for cognitive support"
-            },
-            {
-                "name": "Aspirin",
-                "dosage": "75mg",
-                "frequency": "Once daily (Morning)",
-                "duration": "30 days",
-                "instructions": "Take after breakfast for secondary prevention"
+            logging.error(f"Gemini summary generation failed: {e}")
+            return {
+                "summary_failed": True,
+                "error": str(e),
+                "raw_transcript": transcript,
+                "doctor_notes_summary": transcript,
+                "chief_complaints": [],
+                "symptoms": [],
+                "diagnosis": None,
+                "medications": [],
+                "advice_and_precautions": [],
+                "follow_up": None
             }
-        ],
-        "advice_and_precautions": [
-            "Monitor blood pressure every 3 days",
-            "Low sodium diet",
-            "Caregiver to supervise daily medicine adherence"
-        ],
-        "follow_up": "Return in 4 weeks for BP and renal panel check",
-        "doctor_notes_summary": "Patient presented for routine geriatric chronic disease review. BP 148/92. Adjusted Lisinopril and maintained Donepezil."
+
+    return {
+        "summary_failed": True,
+        "error": "GEMINI_API_KEY is not configured",
+        "raw_transcript": transcript,
+        "doctor_notes_summary": transcript,
+        "chief_complaints": [],
+        "symptoms": [],
+        "diagnosis": None,
+        "medications": [],
+        "advice_and_precautions": [],
+        "follow_up": None
     }

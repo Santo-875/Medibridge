@@ -151,7 +151,8 @@ fun MediBridgeNavGraph(
             popExitTransition = { slideOutOfContainer(SlideDirection.End, tween(280)) }
         ) {
             ScannerScreen(
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                onNavigateToManualEntry = { navController.navigate(Screen.AddEditMedication.route) }
             )
         }
 
@@ -174,6 +175,9 @@ fun MediBridgeNavGraph(
                 },
                 onNavigateToRecordingsList = {
                     navController.navigate(Screen.ConsultationRecordings.route)
+                },
+                onNavigateToManualEntry = {
+                    navController.navigate(Screen.AddEditMedication.route)
                 }
             )
         }

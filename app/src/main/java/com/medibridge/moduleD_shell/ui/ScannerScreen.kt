@@ -51,8 +51,14 @@ import com.medibridge.core.theme.*
 import com.medibridge.moduleB_safety.logic.SafetyVerdict
 import com.medibridge.moduleD_shell.ui.components.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.CancellationException
+import org.json.JSONObject
+import retrofit2.HttpException
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.asRequestBody
@@ -67,14 +73,42 @@ sealed class ScannerUiState {
     data class Error(val message: String) : ScannerUiState()
 }
 
+private fun extractErrorMessage(e: Throwable): String {
+    if (e is TimeoutCancellationException) {
+        return "Scan timed out after 45 seconds. Try a clearer or smaller photo."
+    }
+    if (e is HttpException) {
+        try {
+            val body = e.response()?.errorBody()?.string()
+            if (!body.isNullOrBlank()) {
+                val json = JSONObject(body)
+                if (json.has("detail")) {
+                    val detail = json.get("detail")
+                    if (detail is JSONObject && detail.has("message")) {
+                        return detail.getString("message")
+                    }
+                    return detail.toString()
+                } else if (json.has("message")) {
+                    return json.getString("message")
+                }
+            }
+        } catch (_: Exception) {}
+    }
+    return e.localizedMessage ?: e.message ?: "Failed to process prescription image."
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ScannerScreen(onBack: () -> Unit) {
+fun ScannerScreen(
+    onBack: () -> Unit,
+    onNavigateToManualEntry: () -> Unit = {}
+) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
 
     var uiState by remember { mutableStateOf<ScannerUiState>(ScannerUiState.Camera) }
+    var processingJob: Job? by remember { mutableStateOf(null) }
     var hasCameraPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
@@ -96,7 +130,7 @@ fun ScannerScreen(onBack: () -> Unit) {
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri != null) {
-            scope.launch {
+            processingJob = scope.launch {
                 try {
                     uiState = ScannerUiState.Analyzing("Reading document file (Image / PDF)...")
                     val isPdf = uri.toString().contains(".pdf", ignoreCase = true) ||
@@ -112,10 +146,14 @@ fun ScannerScreen(onBack: () -> Unit) {
                     }
 
                     uiState = ScannerUiState.Analyzing("Extracting prescription items with AI...")
-                    val pipelineResults = processDocumentAndPipeline(context, fileToProcess)
+                    val pipelineResults = withTimeout(45_000L) {
+                        processDocumentAndPipeline(context, fileToProcess)
+                    }
                     uiState = ScannerUiState.Review(pipelineResults)
-                } catch (e: Exception) {
-                    uiState = ScannerUiState.Error(e.message ?: "Failed to process prescription image.")
+                } catch (_: CancellationException) {
+                    uiState = ScannerUiState.Camera
+                } catch (e: Throwable) {
+                    uiState = ScannerUiState.Error(extractErrorMessage(e))
                 }
             }
         }
@@ -264,13 +302,17 @@ fun ScannerScreen(onBack: () -> Unit) {
                                                 ContextCompat.getMainExecutor(context),
                                                 object : ImageCapture.OnImageSavedCallback {
                                                     override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                                                        scope.launch {
+                                                        processingJob = scope.launch {
                                                             try {
                                                                 uiState = ScannerUiState.Analyzing("Extracting medicine details with OCR...")
-                                                                val pipelineResults = processDocumentAndPipeline(context, photoFile)
+                                                                val pipelineResults = withTimeout(45_000L) {
+                                                                    processDocumentAndPipeline(context, photoFile)
+                                                                }
                                                                 uiState = ScannerUiState.Review(pipelineResults)
-                                                            } catch (e: Exception) {
-                                                                uiState = ScannerUiState.Error(e.message ?: "Analysis failed.")
+                                                            } catch (_: CancellationException) {
+                                                                uiState = ScannerUiState.Camera
+                                                            } catch (e: Throwable) {
+                                                                uiState = ScannerUiState.Error(extractErrorMessage(e))
                                                             }
                                                         }
                                                     }
@@ -350,6 +392,17 @@ fun ScannerScreen(onBack: () -> Unit) {
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        Spacer(modifier = Modifier.height(24.dp))
+                        OutlinedButton(
+                            onClick = {
+                                processingJob?.cancel()
+                                uiState = ScannerUiState.Camera
+                            }
+                        ) {
+                            Icon(imageVector = Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Cancel")
+                        }
                     }
                 }
 
@@ -368,14 +421,49 @@ fun ScannerScreen(onBack: () -> Unit) {
                 }
 
                 is ScannerUiState.Error -> {
-                    EmptyState(
-                        icon = Icons.Default.ErrorOutline,
-                        title = "Prescription Processing Failed",
-                        subtitle = state.message,
-                        actionLabel = "Try Again",
-                        onActionClick = { uiState = ScannerUiState.Camera },
-                        modifier = Modifier.align(Alignment.Center)
-                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ErrorOutline,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(56.dp)
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "Prescription Processing Failed",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onBackground
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = state.message,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(24.dp))
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Button(
+                                onClick = { uiState = ScannerUiState.Camera }
+                            ) {
+                                Text("Retry")
+                            }
+                            OutlinedButton(
+                                onClick = onNavigateToManualEntry
+                            ) {
+                                Text("Enter Manually")
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -635,22 +723,67 @@ private fun renderPdfFirstPageToBitmap(context: Context, pdfFile: File): File? {
     }
 }
 
+private fun optimizeImageForUpload(context: Context, file: File): File {
+    if (file.name.endsWith(".pdf", ignoreCase = true)) return file
+    return try {
+        val options = android.graphics.BitmapFactory.Options().apply {
+            inJustDecodeBounds = true
+        }
+        android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
+        val origW = options.outWidth
+        val origH = options.outHeight
+        if (origW <= 0 || origH <= 0) return file
+
+        val maxDim = 1600
+        var sampleSize = 1
+        while (origW / (sampleSize * 2) >= maxDim || origH / (sampleSize * 2) >= maxDim) {
+            sampleSize *= 2
+        }
+
+        val decodeOptions = android.graphics.BitmapFactory.Options().apply {
+            inSampleSize = sampleSize
+        }
+        val bitmap = android.graphics.BitmapFactory.decodeFile(file.absolutePath, decodeOptions) ?: return file
+
+        val curW = bitmap.width
+        val curH = bitmap.height
+        val finalBitmap = if (curW > maxDim || curH > maxDim) {
+            val scale = maxDim.toFloat() / Math.max(curW, curH)
+            val scaledW = (curW * scale).toInt()
+            val scaledH = (curH * scale).toInt()
+            Bitmap.createScaledBitmap(bitmap, scaledW, scaledH, true)
+        } else {
+            bitmap
+        }
+
+        val compressedFile = File(context.cacheDir, "upload_opt_${System.currentTimeMillis()}.jpg")
+        FileOutputStream(compressedFile).use { out ->
+            finalBitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
+        }
+        compressedFile
+    } catch (e: Exception) {
+        Log.e("ScannerScreen", "Image compression fallback to original", e)
+        file
+    }
+}
+
 private suspend fun processDocumentAndPipeline(
     context: Context,
     file: File?
 ): List<MedicationIngestionPipeline.PipelineResultItem> {
     val candidateMeds = mutableListOf<MedicationObject>()
+    val uploadTarget = if (file != null && file.exists()) optimizeImageForUpload(context, file) else file
 
-    if (file != null && file.exists()) {
+    if (uploadTarget != null && uploadTarget.exists()) {
         try {
-            val isPdf = file.name.endsWith(".pdf", ignoreCase = true)
+            val isPdf = uploadTarget.name.endsWith(".pdf", ignoreCase = true)
             val mediaType = if (isPdf) {
                 "application/pdf".toMediaTypeOrNull()
             } else {
                 "image/jpeg".toMediaTypeOrNull()
             }
-            val requestFile = file.asRequestBody(mediaType)
-            val part = MultipartBody.Part.createFormData("file", file.name, requestFile)
+            val requestFile = uploadTarget.asRequestBody(mediaType)
+            val part = MultipartBody.Part.createFormData("file", uploadTarget.name, requestFile)
 
             val service = BackendClient.getService()
             val response = if (isPdf) {

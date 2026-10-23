@@ -91,11 +91,19 @@ class PatientSummaryService(
 
         return try {
             val request = GeminiApiClient.buildTextRequest(prompt, jsonOutput = false)
-            val response = geminiService.generateContent(
-                model = "gemini-flash-latest",
-                apiKey = apiKey,
-                request = request
-            )
+            val response = try {
+                geminiService.generateContent(
+                    model = "gemini-3.5-flash",
+                    apiKey = apiKey,
+                    request = request
+                )
+            } catch (e1: Exception) {
+                geminiService.generateContent(
+                    model = "gemini-3.1-flash-lite",
+                    apiKey = apiKey,
+                    request = request
+                )
+            }
             response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text?.trim()
         } catch (e: Exception) {
             Log.w(TAG, "Gemini call failed for patient summary: ${e.message}")

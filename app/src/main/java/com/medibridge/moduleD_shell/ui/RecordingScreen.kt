@@ -36,8 +36,14 @@ import com.medibridge.core.db.RecordingEntity
 import com.medibridge.core.model.MedicationObject
 import com.medibridge.core.network.BackendClient
 import com.medibridge.core.pipeline.MedicationIngestionPipeline
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.CancellationException
+import org.json.JSONObject
+import retrofit2.HttpException
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.asRequestBody
@@ -47,34 +53,50 @@ import java.util.*
 import com.medibridge.core.theme.*
 import com.medibridge.moduleD_shell.ui.components.*
 
-/**
- * RecordingScreen — Bilingual doctor consultation voice recorder.
- *
- * v4 additions:
- *   • Sub-tabs: Transcribed | Raw/Untranslated
- *   • Top-right "Voice Storage" summary icon
- *   • Backend failure stores status="untranslated" with real audio path, no fallback merge
- *   • "Convert to text" retry button per untranslated item
- */
+private fun extractSpeechErrorMessage(e: Throwable): String {
+    if (e is TimeoutCancellationException) {
+        return "Audio upload timed out after 45 seconds. Please check your network connection."
+    }
+    if (e is HttpException) {
+        try {
+            val body = e.response()?.errorBody()?.string()
+            if (!body.isNullOrBlank()) {
+                val json = JSONObject(body)
+                if (json.has("detail")) {
+                    val detail = json.get("detail")
+                    if (detail is JSONObject && detail.has("message")) {
+                        return detail.getString("message")
+                    }
+                    return detail.toString()
+                } else if (json.has("message")) {
+                    return json.getString("message")
+                }
+            }
+        } catch (_: Exception) {}
+    }
+    return e.localizedMessage ?: e.message ?: "Audio processing failed."
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RecordingScreen(
     onBack: () -> Unit = {},
     onNavigateToReminders: () -> Unit = {},
-    onNavigateToRecordingsList: () -> Unit = {}
+    onNavigateToRecordingsList: () -> Unit = {},
+    onNavigateToManualEntry: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope   = rememberCoroutineScope()
     val db      = remember { AppDatabase.getInstance(context) }
 
-    // Recording state
     var isRecording          by remember { mutableStateOf(false) }
     var isProcessing         by remember { mutableStateOf(false) }
+    var processingJob        by remember { mutableStateOf<Job?>(null) }
+    var lastErrorMessage     by remember { mutableStateOf<String?>(null) }
     var recordingDurationSeconds by remember { mutableStateOf(0) }
     var mediaRecorder        by remember { mutableStateOf<MediaRecorder?>(null) }
     var currentAudioFile     by remember { mutableStateOf<File?>(null) }
 
-    // Result state (most recent session)
     var lastTamilTranscript  by remember { mutableStateOf<String?>(null) }
     var lastEnglishTranscript by remember { mutableStateOf<String?>(null) }
     var lastSummaryText      by remember { mutableStateOf<String?>(null) }
@@ -167,13 +189,9 @@ fun RecordingScreen(
         }
     }
 
-    /**
-     * Attempt backend transcription for [file], returning (tamilText, englishText, doctorNotes, meds).
-     * Returns null for all strings on failure, never substitutes the bilingual demo fallback.
-     */
     suspend fun attemptBackendTranscription(
         file: File
-    ): Triple<String, String, String>? {
+    ): Result<Triple<String, String, String>> {
         return try {
             val reqBody  = file.asRequestBody("audio/m4a".toMediaTypeOrNull())
             val part     = MultipartBody.Part.createFormData("file", file.name, reqBody)
@@ -182,11 +200,14 @@ fun RecordingScreen(
             val english  = resp.transcriptEnglish ?: resp.transcript ?: ""
             val summary  = resp.summary
             val notes    = summary?.doctorNotesSummary ?: summary?.diagnosis ?: ""
-            if (tamil.isBlank() && english.isBlank()) null
-            else Triple(tamil, english, notes)
-        } catch (e: Exception) {
+            if (tamil.isBlank() && english.isBlank()) {
+                Result.failure(IllegalStateException("No transcription returned from audio."))
+            } else {
+                Result.success(Triple(tamil, english, notes))
+            }
+        } catch (e: Throwable) {
             Log.w("RecordingScreen", "Backend transcription failed: ${e.message}")
-            null
+            Result.failure(e)
         }
     }
 
@@ -200,18 +221,20 @@ fun RecordingScreen(
         mediaRecorder  = null
         isRecording    = false
         isProcessing   = true
+        lastErrorMessage = null
 
-        scope.launch {
+        processingJob = scope.launch {
             try {
                 val file = currentAudioFile
 
                 if (file != null && file.exists()) {
-                    val backendResult = attemptBackendTranscription(file)
+                    val backendResult = withTimeout(45_000L) {
+                        attemptBackendTranscription(file)
+                    }
 
-                    if (backendResult != null) {
-                        val (tamil, english, notes) = backendResult
+                    if (backendResult.isSuccess) {
+                        val (tamil, english, notes) = backendResult.getOrThrow()
 
-                        // ── Real backend success ──────────────────────────────
                         val combinedTranscript = buildString {
                             if (tamil.isNotBlank())   append("Tamil:\n$tamil\n\n")
                             if (english.isNotBlank()) append("English:\n$english")
@@ -232,7 +255,6 @@ fun RecordingScreen(
                         lastSummaryText       = notes.ifBlank { null }
                         statusMessage         = "Consultation transcribed and saved."
 
-                        // Try to ingest medications via pipeline
                         try {
                             val resp2    = BackendClient.getService().uploadSpeech(
                                 MultipartBody.Part.createFormData(
@@ -263,8 +285,8 @@ fun RecordingScreen(
                         }
 
                     } else {
-                        // ── Backend failed → store as untranslated with real audio path ──
-                        // Do NOT use the bilingual demo fallback here.
+                        val err = backendResult.exceptionOrNull() ?: Exception("Transcription failed")
+                        lastErrorMessage = extractSpeechErrorMessage(err)
                         val recEntity = RecordingEntity(
                             timestamp  = System.currentTimeMillis(),
                             filePath   = file.absolutePath,
@@ -274,7 +296,7 @@ fun RecordingScreen(
                         )
                         val rowId = db.recordingDao().insertRecording(recEntity)
                         Log.w("RecordingScreen", "Backend unavailable — stored untranslated recording row=$rowId path=${file.absolutePath}")
-                        statusMessage = "Backend unavailable — recording saved as Raw (audio path preserved). Use 'Convert to text' when online."
+                        statusMessage = "Transcription failed: $lastErrorMessage"
                         lastTamilTranscript   = null
                         lastEnglishTranscript = null
                         lastSummaryText       = null
@@ -284,17 +306,19 @@ fun RecordingScreen(
                 }
 
                 Toast.makeText(context, "Recording saved", Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
+            } catch (_: CancellationException) {
+                statusMessage = "Processing cancelled."
+            } catch (e: Throwable) {
                 Log.e("RecordingScreen", "Processing error during audio ingestion", e)
-                statusMessage = "Error saving recording: ${e.message}"
-                Toast.makeText(context, "Error saving recording (check Logcat)", Toast.LENGTH_LONG).show()
+                lastErrorMessage = extractSpeechErrorMessage(e)
+                statusMessage = "Error: $lastErrorMessage"
+                Toast.makeText(context, "Error saving recording", Toast.LENGTH_LONG).show()
             } finally {
                 isProcessing = false
             }
         }
     }
 
-    // ── Retry transcription for an untranslated recording ────────────────────
     fun retryTranscription(recording: RecordingEntity) {
         retryingIds = retryingIds + recording.id
         scope.launch {
@@ -305,9 +329,11 @@ fun RecordingScreen(
                     retryingIds = retryingIds - recording.id
                     return@launch
                 }
-                val result = attemptBackendTranscription(file)
-                if (result != null) {
-                    val (tamil, english, notes) = result
+                val result = withTimeout(45_000L) {
+                    attemptBackendTranscription(file)
+                }
+                if (result.isSuccess) {
+                    val (tamil, english, notes) = result.getOrThrow()
                     val combined = buildString {
                         if (tamil.isNotBlank())   append("Tamil:\n$tamil\n\n")
                         if (english.isNotBlank()) append("English:\n$english")
@@ -320,7 +346,9 @@ fun RecordingScreen(
                     )
                     Toast.makeText(context, "Transcription succeeded!", Toast.LENGTH_SHORT).show()
                 } else {
-                    Toast.makeText(context, "Transcription still unavailable. Try again later.", Toast.LENGTH_LONG).show()
+                    val err = result.exceptionOrNull() ?: Exception("Failed")
+                    val msg = extractSpeechErrorMessage(err)
+                    Toast.makeText(context, "Retry failed: $msg", Toast.LENGTH_LONG).show()
                 }
             } catch (e: Exception) {
                 Log.e("RecordingScreen", "Retry transcription failed", e)
@@ -541,6 +569,67 @@ fun RecordingScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        if (isProcessing) {
+                            Spacer(Modifier.height(12.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    processingJob?.cancel()
+                                    isProcessing = false
+                                    statusMessage = "Processing cancelled."
+                                }
+                            ) {
+                                Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Cancel")
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (lastErrorMessage != null) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = "Transcription Failed",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                            }
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                text = lastErrorMessage!!,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    onClick = {
+                                        val file = currentAudioFile
+                                        if (file != null && file.exists()) {
+                                            stopRecording()
+                                        }
+                                    }
+                                ) {
+                                    Text("Retry")
+                                }
+                                OutlinedButton(
+                                    onClick = onNavigateToManualEntry
+                                ) {
+                                    Text("Enter Manually")
+                                }
+                            }
+                        }
                     }
                 }
             }

@@ -119,21 +119,20 @@ class ChatRepository(private val context: Context) {
         if (!apiKey.isNullOrBlank() && apiKey != "your_gemini_api_key_here") {
             try {
                 val prompt = """
-                    You are Medi, an intelligent, empathetic medical assistant inside the MediBridge health app.
-                    Answer the patient's question accurately, concisely, and with warmth, using ONLY the verified medical context below.
-                    
-                    Structure your response strictly using this clean format:
-                    1. A concise, empathetic 1-2 sentence direct answer.
-                    2. **Schedule & Instructions**: Clear bullet points (•) listing specific medicines, doses, food timing, or steps.
-                    3. **Precautions & Safety**: Clear bullet points (•) highlighting warnings, side effects, missed dose guidance, or food/drug interactions (if relevant).
-                    4. **Clinical Advice**: A brief 1-sentence reminder on when to contact their doctor.
+                    You are Medi, an intelligent, empathetic clinical medication and healthcare assistant inside the MediBridge app.
+                    Provide accurate, compassionate, and medically sound guidance to the patient.
 
-                    Formatting Rules:
-                    - Use bold titles with clean headers (e.g., **Schedule & Instructions**, **Precautions & Safety**).
-                    - Use bullet points (•) for each distinct point.
-                    - Keep sentences crisp, readable, and patient-friendly.
+                    GUIDELINES:
+                    1. If the patient asks about their medications, schedule, or safety, reference their verified patient context below.
+                    2. If the patient asks general medical, wellness, dietary, or illness questions, provide clear, safe, evidence-based clinical guidance.
+                    3. Structure your response clearly:
+                       • **Direct Answer**: 1-2 empathetic, clear sentences directly answering their question.
+                       • **Key Instructions & Schedule**: Bullet points (•) highlighting specific medicines, doses, food timing, or practical tips (if relevant).
+                       • **Precautions & Safety**: Bullet points (•) for warnings, side effects, missed dose guidance, or interactions.
+                       • **Clinical Guidance**: A brief closing reminder on when to contact their prescribing physician or pharmacist.
+                    4. Keep sentences crisp, readable, supportive, and patient-friendly.
 
-                    --- VERIFIED PATIENT CONTEXT ---
+                    --- VERIFIED PATIENT REGIMEN CONTEXT ---
                     $contextBlock
 
                     --- PATIENT QUESTION ---
@@ -141,15 +140,24 @@ class ChatRepository(private val context: Context) {
                 """.trimIndent()
 
                 val request = GeminiApiClient.buildTextRequest(prompt, jsonOutput = false)
-                val response = GeminiApiClient.service.generateContent(
-                    model = "gemini-flash-latest",
-                    apiKey = apiKey,
-                    request = request
-                )
+                val response = try {
+                    GeminiApiClient.service.generateContent(
+                        model = "gemini-3.5-flash",
+                        apiKey = apiKey,
+                        request = request
+                    )
+                } catch (e1: Exception) {
+                    Log.w(TAG, "Primary gemini-3.5-flash error: ${e1.message}, trying gemini-3.1-flash-lite")
+                    GeminiApiClient.service.generateContent(
+                        model = "gemini-3.1-flash-lite",
+                        apiKey = apiKey,
+                        request = request
+                    )
+                }
 
                 val replyText = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
                 if (!replyText.isNullOrBlank()) {
-                    Log.i(TAG, "[CHAT_PATH: GEMINI_SUCCESS] Successfully generated clinical response via Gemini Flash")
+                    Log.i(TAG, "[CHAT_PATH: GEMINI_SUCCESS] Successfully generated clinical response via Gemini")
                     return@withContext replyText.trim()
                 } else {
                     Log.w(TAG, "[CHAT_PATH: GEMINI_EMPTY] Gemini returned empty response text, falling back to local RAG")
@@ -206,11 +214,19 @@ class ChatRepository(private val context: Context) {
                 """.trimIndent()
 
                 val request = GeminiApiClient.buildTextRequest(prompt, jsonOutput = false)
-                val response = GeminiApiClient.service.generateContent(
-                    model = "gemini-flash-latest",
-                    apiKey = apiKey,
-                    request = request
-                )
+                val response = try {
+                    GeminiApiClient.service.generateContent(
+                        model = "gemini-3.5-flash",
+                        apiKey = apiKey,
+                        request = request
+                    )
+                } catch (e1: Exception) {
+                    GeminiApiClient.service.generateContent(
+                        model = "gemini-3.1-flash-lite",
+                        apiKey = apiKey,
+                        request = request
+                    )
+                }
 
                 val replyText = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
                 if (!replyText.isNullOrBlank()) {

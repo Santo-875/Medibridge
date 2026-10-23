@@ -4,6 +4,7 @@ import shutil
 import uuid
 import json
 import logging
+import asyncio
 from pathlib import Path
 from typing import Optional, List, Literal
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends
@@ -119,20 +120,20 @@ class MedicationItem(BaseModel):
     validation: ValidationInfo
 
 class PatientInfo(BaseModel):
-    name: Optional[str] = "John Doe"
-    age: Optional[int] = 58
-    relation: Optional[str] = "Self"
-    mobile: Optional[str] = "+1 555-0199"
-    service_no: Optional[str] = "MED-78921"
-    card_no: Optional[str] = "CRD-4412"
+    name: Optional[str] = None
+    age: Optional[int] = None
+    relation: Optional[str] = None
+    mobile: Optional[str] = None
+    service_no: Optional[str] = None
+    card_no: Optional[str] = None
 
 class PrescriptionInfo(BaseModel):
-    date: Optional[str] = "2026-09-26"
-    time: Optional[str] = "10:30:00"
-    prescribed_by: Optional[str] = "Dr. Sarah Jenkins, MD"
-    remarks: Optional[str] = "Type 2 Diabetes Mellitus / Essential Hypertension"
-    delivery_type: Optional[str] = "Pharmacy Counter Pickup"
-    token_no: Optional[str] = "A-104"
+    date: Optional[str] = None
+    time: Optional[str] = None
+    prescribed_by: Optional[str] = None
+    remarks: Optional[str] = None
+    delivery_type: Optional[str] = None
+    token_no: Optional[str] = None
 
 class PrescriptionRecord(BaseModel):
     patient: PatientInfo
@@ -160,131 +161,123 @@ def read_root():
     }
 
 # ── Module A: Prescription & Pharmacy Bill Scanning ───────────────────────────
+@app.post("/scan")
 @app.post("/api/prescriptions")
-def upload_prescription(
+async def upload_prescription(
     file: UploadFile = File(...),
     profile_id: Optional[str] = Form(None)
 ):
-    import concurrent.futures
-    file_bytes = file.file.read()
+    if ocr is None:
+        raise HTTPException(status_code=503, detail="OCR engine unavailable")
+
+    file_bytes = await file.read()
     if not file_bytes:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
     file_id = str(uuid.uuid4())
+    req_dir = UPLOAD_DIR / file_id
+    req_dir.mkdir(parents=True, exist_ok=True)
     ext = Path(file.filename or "scan.jpg").suffix or ".jpg"
-    saved_path = UPLOAD_DIR / f"{file_id}{ext}"
-    
+    saved_path = req_dir / f"input{ext}"
+
     with open(saved_path, "wb") as buffer:
         buffer.write(file_bytes)
 
-    # Attempt OCR and LLM extraction via prescription_scanning module with timeout safety
+    import cv2
+    import numpy as np
+
+    image = cv2.imread(str(saved_path))
+    if image is None:
+        raise HTTPException(status_code=400, detail="Could not decode image for OCR processing.")
+
+    height, width = image.shape[:2]
+    if height < 200 or width < 200:
+        raise HTTPException(status_code=422, detail="Image resolution too small. Try a higher resolution photo.")
+
+    gray_test = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    blur_score = cv2.Laplacian(gray_test, cv2.CV_64F).var()
+    if blur_score < 25.0:
+        raise HTTPException(status_code=422, detail="Image too blurry. Hold the camera steady and use better lighting.")
+
+    max_dim = 800
+    if max(height, width) > max_dim:
+        scale = float(max_dim) / max(height, width)
+        image = cv2.resize(image, (int(width * scale), int(height * scale)), interpolation=cv2.INTER_AREA)
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=1.6, tileGridSize=(8, 8))
+    enhanced = clahe.apply(gray)
+    ocr_image = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
+
     try:
-        import cv2
-        import numpy as np
+        result = await asyncio.to_thread(ocr.predict, ocr_image)
+        raw_text = reconstruct_ocr_text(result)
+    except Exception as err:
+        logging.error(f"OCR prediction failed: {err}")
+        raise HTTPException(status_code=500, detail=f"OCR failed: {err}")
 
-        image = cv2.imread(str(saved_path))
-        if image is None:
-            raise HTTPException(status_code=400, detail="Could not decode image for OCR processing.")
+    if not raw_text or not raw_text.strip():
+        raise HTTPException(
+            status_code=422,
+            detail="Could not read any text from this image. Try better lighting or a flatter angle."
+        )
 
-        # Optimize resolution for fast OCR throughput (<= 480px prevents CPU timeout)
-        h, w = image.shape[:2]
-        if max(h, w) > 480:
-            scale = 480.0 / max(h, w)
-            image = cv2.resize(image, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+    med_lines = extract_medicine_section(raw_text)
+    blocks = reconstruct_medicine_blocks(med_lines)
+    blocks = merge_medicine_blocks(blocks)
 
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        clahe = cv2.createCLAHE(clipLimit=1.6, tileGridSize=(8, 8))
-        enhanced = clahe.apply(gray)
-        ocr_image = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
+    def _process_single_block(b):
+        p = parse_medicine_block(b)
+        p["medicine"] = normalize_medicine_text(p["medicine"])
+        p["validation"] = validate_medicine(p["medicine"])
+        return p
 
-        # Execute OCR with a strict 22s timeout so ngrok / OkHttp NEVER times out
-        def do_ocr():
-            res = ocr.predict(ocr_image)
-            return reconstruct_ocr_text(res)
+    validated = await asyncio.to_thread(lambda: [_process_single_block(b) for b in blocks])
 
-        fut = _ocr_executor.submit(do_ocr)
+    record = None
+    if os.environ.get("GROQ_API_KEY"):
         try:
-            raw_text = fut.result(timeout=22.0)
-        except concurrent.futures.TimeoutError:
-            logging.warning("[MediBridge] OCR took > 22s on CPU, proceeding with smart fallback.")
-            raw_text = "PRESCRIPTION RECEIPT\nPatient: Verified Patient\nRx:\nAtorvastatin 10mg OD after dinner\nSodium Bicarbonate 500mg BD after food"
-
-        med_lines = extract_medicine_section(raw_text)
-        blocks = reconstruct_medicine_blocks(med_lines)
-        blocks = merge_medicine_blocks(blocks)
-        
-        def _process_single_block(b):
-            p = parse_medicine_block(b)
-            p["medicine"] = normalize_medicine_text(p["medicine"])
-            p["validation"] = validate_medicine(p["medicine"])
-            return p
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as val_pool:
-            validated = list(val_pool.map(_process_single_block, blocks))
-
-        try:
-            record = structure_prescription_with_llm(raw_text, validated)
+            record = await asyncio.to_thread(structure_prescription_with_llm, raw_text, validated)
         except Exception as llm_err:
-            logging.warning(f"[MediBridge] LLM structuring error: {llm_err}. Building record directly from OCR medicines.")
-            medication_items = []
-            for m in validated:
-                raw_med = m.get("medicine", "")
-                val = m.get("validation", {})
-                medication_items.append(MedicationItem(
-                    medicine=raw_med,
-                    normalized_name=val.get("matched_name") or raw_med,
-                    dosage=m.get("dosage") or "1 dose",
-                    instruction=m.get("instruction") or "As prescribed",
-                    duration_days=30,
-                    pqt=str(m.get("pqt")) if m.get("pqt") is not None else None,
-                    iqt=str(m.get("iqt")) if m.get("iqt") is not None else None,
-                    balance=str(m.get("bal")) if m.get("bal") is not None else None,
-                    validation=ValidationInfo(
-                        rxcui=val.get("rxcui"),
-                        status=val.get("confidence", "HIGH"),
-                        reason=val.get("flag_reason")
-                    )
-                ))
-            if not medication_items:
-                raise llm_err
-            record = PrescriptionRecord(
-                patient=PatientInfo(name="Patient", age=None, relation=None, mobile=None),
-                prescription=PrescriptionInfo(
-                    date=utcnow().strftime("%Y-%m-%d"),
-                    time=utcnow().strftime("%H:%M:%S"),
-                    prescribed_by="Prescribing Physician"
-                ),
-                medications=medication_items
+            logging.error(f"Groq structuring error: {llm_err}")
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "message": f"Groq structuring failed: {llm_err}",
+                    "raw_text": raw_text,
+                    "validated_medicines": validated
+                }
             )
-    except Exception as e:
-        logging.warning(f"[MediBridge] OCR/LLM pipeline error: {e}. Using clinical fallback prescription record.")
-        raw_text = "PRESCRIPTION RECEIPT\nDr. Sarah Jenkins, MD\nPatient: Verified Patient\nRx:\nParacetamol 500mg BD with food\nAmoxicillin 500mg TDS after food"
+    else:
+        medication_items = []
+        for m in validated:
+            raw_med = m.get("medicine", "")
+            val = m.get("validation", {})
+            medication_items.append(MedicationItem(
+                medicine=raw_med,
+                normalized_name=val.get("matched_name") or raw_med,
+                dosage=m.get("dosage"),
+                instruction=m.get("instruction"),
+                duration_days=30,
+                pqt=str(m.get("pqt")) if m.get("pqt") is not None else None,
+                iqt=str(m.get("iqt")) if m.get("iqt") is not None else None,
+                balance=str(m.get("bal")) if m.get("bal") is not None else None,
+                validation=ValidationInfo(
+                    rxcui=val.get("rxcui"),
+                    status=val.get("confidence", "UNVERIFIED"),
+                    reason=val.get("flag_reason")
+                )
+            ))
         record = PrescriptionRecord(
-            patient=PatientInfo(name="Patient", age=None, relation="Self", mobile=None),
+            patient=PatientInfo(name=None, age=None, relation=None, mobile=None),
             prescription=PrescriptionInfo(
                 date=utcnow().strftime("%Y-%m-%d"),
                 time=utcnow().strftime("%H:%M:%S"),
-                prescribed_by="Prescribing Physician",
-                remarks="Clinical Regimen",
-                delivery_type="Polyclinic Pickup",
-                token_no="A-101"
+                prescribed_by=None
             ),
-            medications=[
-                MedicationItem(
-                    medicine="Paracetamol",
-                    normalized_name="Paracetamol",
-                    dosage="500mg",
-                    instruction="Take 1 tablet twice daily with food",
-                    duration_days=30,
-                    pqt="30",
-                    iqt="30",
-                    balance="0",
-                    validation=ValidationInfo(status="HIGH", rxcui="7052", reason="Verified clinical match")
-                )
-            ]
+            medications=medication_items
         )
 
-    # Store prescription row in DB
     db = next(get_db())
     try:
         db_presc = Prescription(
@@ -310,10 +303,9 @@ def upload_prescription(
         "prescription_record": record.model_dump()
     }
 
-# Pharmacy Billing PDF integration endpoint
 @app.post("/api/billing/pdf")
-def process_billing_pdf(file: UploadFile = File(...), profile_id: Optional[str] = Form(None)):
-    return upload_prescription(file, profile_id=profile_id)
+async def process_billing_pdf(file: UploadFile = File(...), profile_id: Optional[str] = Form(None)):
+    return await upload_prescription(file, profile_id=profile_id)
 
 # ── Speech-to-Text & Medical Summary ─────────────────────────────────────────
 @app.post("/api/speech/upload")
@@ -332,40 +324,37 @@ async def upload_speech(
     with open(file_path, "wb") as buffer:
         buffer.write(file_bytes)
 
-    # 1. Transcribe audio to Tamil and translate Tamil to English via Sarvam AI
     try:
         from speech_to_text.sarvam_stt import transcribe_and_translate_audio
         tamil_text, english_text = transcribe_and_translate_audio(file_path)
     except Exception as e:
         logging.error(f"[MediBridge] Speech-to-text failed: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500,
-            detail=f"Audio transcription failed: {str(e)}"
+            status_code=502,
+            detail={"code": "STT_FAILED", "message": f"Audio transcription failed: {str(e)}"}
         )
 
     combined_transcript = f"Tamil: {tamil_text}\n\nEnglish: {english_text}"
 
-    # 2. Generate structured clinical summary via Gemini LLM
-    gemini_key = os.getenv("GEMINI_API_KEY", "")
-    if not gemini_key or gemini_key.startswith("your_"):
-        raise HTTPException(
-            status_code=500,
-            detail="GEMINI_API_KEY is not configured in backend/.env for medical summarization."
-        )
-
+    from speech_to_text.llm_summary import generate_medical_summary
     try:
-        from speech_to_text.llm_summary import generate_medical_summary
         summary = generate_medical_summary(english_text)
-        if summary:
+        if summary and not summary.get("summary_failed"):
             summary["doctor_notes_summary"] = f"Tamil: {tamil_text}\nEnglish: {english_text}\n" + (summary.get("doctor_notes_summary") or "")
-        else:
-            raise ValueError("Gemini returned empty summary")
     except Exception as e:
         logging.error(f"[MediBridge] Gemini summary generation failed: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Medical summarization failed: {str(e)}"
-        )
+        summary = {
+            "summary_failed": True,
+            "error": str(e),
+            "raw_transcript": english_text,
+            "doctor_notes_summary": f"Tamil: {tamil_text}\nEnglish: {english_text}",
+            "chief_complaints": [],
+            "symptoms": [],
+            "diagnosis": None,
+            "medications": [],
+            "advice_and_precautions": [],
+            "follow_up": None
+        }
 
     # Store recording row in DB
     db = next(get_db())

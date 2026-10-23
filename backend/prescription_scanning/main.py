@@ -19,6 +19,8 @@ import urllib.parse
 import urllib.request
 import json
 import re
+import asyncio
+import uuid
 
 app = FastAPI()
 
@@ -69,7 +71,7 @@ try:
         enable_mkldnn=False
     )
 except Exception as e:
-    print(f"PaddleOCR init note: {e}")
+    logging.error(f"Failed to initialize PaddleOCR: {e}")
     ocr = None
 
 def reconstruct_ocr_text(result):
@@ -142,7 +144,7 @@ def check_medicine_with_rxnorm(medicine_name):
     )
 
     try:
-        with urllib.request.urlopen(url, timeout=0.8) as response:
+        with urllib.request.urlopen(url, timeout=5.0) as response:
             data = json.loads(response.read().decode())
 
         candidates = data.get("approximateGroup", {}).get(
@@ -153,7 +155,6 @@ def check_medicine_with_rxnorm(medicine_name):
         if not named:
             return None
 
-        # Prefer RXNORM official source or take first candidate with a valid name
         best = next((c for c in named if c.get("source") == "RXNORM"), named[0])
 
         return {
@@ -167,71 +168,68 @@ def check_medicine_with_rxnorm(medicine_name):
 
 
 def validate_medicine(medicine_text):
-    """
-    Validates medicine text against RxNorm without changing
-    the original OCR text. Requires name + strength agreement for HIGH confidence.
-    """
     raw_medicine = medicine_text.strip()
+    try:
+        result = check_medicine_with_rxnorm(raw_medicine)
 
-    result = check_medicine_with_rxnorm(raw_medicine)
+        if not result or not result.get("name"):
+            return {
+                "raw_medicine": raw_medicine,
+                "matched_name": None,
+                "rxcui": None,
+                "confidence": "UNVERIFIED",
+                "flag_reason": "No reliable RxNorm match found"
+            }
 
-    if not result or not result.get("name"):
+        matched_name = result["name"]
+        rxcui = result["rxcui"]
+
+        raw_upper = raw_medicine.upper()
+        matched_upper = matched_name.upper()
+
+        raw_tokens = raw_upper.split()
+        drug_name = raw_tokens[0] if raw_tokens else ""
+        strength_match = re.search(r"\b\d+(\.\d+)?\s*(MG|MCG|G|%)\b", raw_upper)
+        strength = strength_match.group(0).replace(" ", "") if strength_match else None
+
+        matched_has_drug = drug_name and drug_name in matched_upper
+        matched_has_strength = strength and (strength in matched_upper.replace(" ", "")) if strength else True
+
+        is_medical_supply = any(term in raw_upper for term in ["NEEDLE", "NEEDLES", "SYRINGE", "PEN"])
+        is_combination = "+" in raw_upper
+
+        is_drug_mismatch = False
+        if "KETOANALOGUE" in raw_upper and "LIPOIC" in matched_upper:
+            is_drug_mismatch = True
+
+        if (raw_upper == matched_upper or (matched_has_drug and matched_has_strength)) \
+                and not is_medical_supply \
+                and not is_combination \
+                and not is_drug_mismatch:
+            confidence = "HIGH"
+            reason = "Exact/strong RxNorm drug and strength match"
+        elif result["score"] > 0:
+            confidence = "NEEDS_VERIFICATION"
+            reason = "High similarity match; OCR difference or medical supply detected"
+        else:
+            confidence = "UNVERIFIED"
+            reason = "Match is not strong enough for automatic acceptance"
+
+        return {
+            "raw_medicine": raw_medicine,
+            "matched_name": matched_name,
+            "rxcui": rxcui,
+            "confidence": confidence,
+            "flag_reason": reason
+        }
+    except Exception as e:
         return {
             "raw_medicine": raw_medicine,
             "matched_name": None,
             "rxcui": None,
             "confidence": "UNVERIFIED",
-            "flag_reason": "No reliable RxNorm match found"
+            "flag_reason": f"RxNorm verification degraded: {e}"
         }
-
-    matched_name = result["name"]
-    rxcui = result["rxcui"]
-
-    raw_upper = raw_medicine.upper()
-    matched_upper = matched_name.upper()
-
-    # Extract primary drug name and dosage strength
-    raw_tokens = raw_upper.split()
-    drug_name = raw_tokens[0] if raw_tokens else ""
-    strength_match = re.search(r"\b\d+(\.\d+)?\s*(MG|MCG|G|%)\b", raw_upper)
-    strength = strength_match.group(0).replace(" ", "") if strength_match else None
-
-    # Check if active drug and strength agree
-    matched_has_drug = drug_name and drug_name in matched_upper
-    matched_has_strength = strength and (strength in matched_upper.replace(" ", "")) if strength else True
-
-    # Medical supplies (e.g. needles, syringes, pens)
-    is_medical_supply = any(term in raw_upper for term in ["NEEDLE", "NEEDLES", "SYRINGE", "PEN"])
-
-    # Multi-ingredient combinations (containing +) or compounds
-    is_combination = "+" in raw_upper
-
-    # Check for specific non-matching drug pairs (e.g. ALPHA KETOANALOGUE matching alpha lipoic acid)
-    is_drug_mismatch = False
-    if "KETOANALOGUE" in raw_upper and "LIPOIC" in matched_upper:
-        is_drug_mismatch = True
-
-    # High confidence requires exact/strong drug name match, strength agreement, not supply, not combination, not mismatch
-    if (raw_upper == matched_upper or (matched_has_drug and matched_has_strength)) \
-            and not is_medical_supply \
-            and not is_combination \
-            and not is_drug_mismatch:
-        confidence = "HIGH"
-        reason = "Exact/strong RxNorm drug and strength match"
-    elif result["score"] > 0:
-        confidence = "NEEDS_VERIFICATION"
-        reason = "High similarity match; OCR difference or medical supply detected"
-    else:
-        confidence = "UNVERIFIED"
-        reason = "Match is not strong enough for automatic acceptance"
-
-    return {
-        "raw_medicine": raw_medicine,
-        "matched_name": matched_name,
-        "rxcui": rxcui,
-        "confidence": confidence,
-        "flag_reason": reason
-    }
 def extract_medicine_section(raw_text):
     lines = raw_text.splitlines()
 
@@ -446,229 +444,89 @@ def normalize_medicine_text(text):
 UPLOAD_DIR = "image_uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+@app.post("/scan")
 @app.post("/api/prescriptions")
 async def upload_prescription(file: UploadFile = File(...)):
-    allowed_types = {
-        "image/jpeg",
-        "image/png"
-    }
+    if ocr is None:
+        raise HTTPException(status_code=503, detail="OCR engine unavailable")
+
+    allowed_types = {"image/jpeg", "image/png"}
     if file.content_type not in allowed_types:
-        raise HTTPException(
-            status_code=400,
-            detail="Only JPG and PNG images are allowed"
-        )
+        raise HTTPException(status_code=400, detail="Only JPG and PNG images are allowed")
+
     data = await file.read()
     if not data:
-        raise HTTPException(
-            status_code=400,
-            detail="Empty file"
-        )
-    original_path = os.path.join(UPLOAD_DIR, "original.jpg")
-    with open(original_path, "wb") as f:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    req_id = str(uuid.uuid4())
+    req_dir = os.path.join(UPLOAD_DIR, req_id)
+    os.makedirs(req_dir, exist_ok=True)
+    input_path = os.path.join(req_dir, "input.jpg")
+    with open(input_path, "wb") as f:
         f.write(data)
-    image = cv2.imread(original_path)
+
+    image = cv2.imread(input_path)
     if image is None:
-        raise HTTPException(
-            status_code=400,
-            detail="Could not read image"
-        )
-    print("Image loaded successfully")
-    print("Image shape:", image.shape)
+        raise HTTPException(status_code=400, detail="Could not read image")
+
     height, width = image.shape[:2]
-    max_height = 1200
-    if height > max_height:
-        scale = max_height / height
-        new_width = int(width * scale)
-        new_height = int(height * scale)
-        image = cv2.resize(
-            image,
-            (new_width, new_height),
-            interpolation=cv2.INTER_AREA
-        )
-        print("Resized image shape:", image.shape)
-        resized_path = os.path.join(UPLOAD_DIR, "resized.jpg")
-        cv2.imwrite(resized_path, image)
+    if height < 200 or width < 200:
+        raise HTTPException(status_code=422, detail="Image resolution too small. Try a higher resolution photo.")
+
+    gray_test = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    blur_score = cv2.Laplacian(gray_test, cv2.CV_64F).var()
+    if blur_score < 25.0:
+        raise HTTPException(status_code=422, detail="Image too blurry. Hold the camera steady and use better lighting.")
+
+    max_dim = 800
+    if max(height, width) > max_dim:
+        scale = float(max_dim) / max(height, width)
+        image = cv2.resize(image, (int(width * scale), int(height * scale)), interpolation=cv2.INTER_AREA)
+
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    print("Grayscale image shape:", gray.shape)
-    grayscale_path = os.path.join(UPLOAD_DIR, "grayscale.jpg")
-    cv2.imwrite(grayscale_path, gray)
-    denoised = cv2.fastNlMeansDenoising(
-    gray,
-    None,
-    5,
-    7,
-    21
-    )   
-    denoised_path = os.path.join(UPLOAD_DIR, "denoised.jpg")
-    cv2.imwrite(denoised_path, denoised)
-    print("Denoising completed")
-    clahe = cv2.createCLAHE(
-    clipLimit=1.6,
-    tileGridSize=(8, 8)
-    )
-    enhanced = clahe.apply(denoised)
-    cv2.imwrite("image_uploads/enhanced.jpg", enhanced)
-    print("Contrast enhancement completed")
-    thresholded = cv2.adaptiveThreshold(
-    enhanced,
-    255,
-    cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-    cv2.THRESH_BINARY,
-    31,
-    5
-    )
-    cv2.imwrite("image_uploads/thresholded.jpg", thresholded)
-    print("Thresholding completed")
-    coords = np.column_stack(np.where(thresholded == 0))
-    if len(coords) > 0:
-        angle = cv2.minAreaRect(coords)[-1]
-        if angle < -45:
-            angle = -(90 + angle)
-        else:
-            angle = -angle
-    else:
-        angle = 0.0
-
-    height, width = thresholded.shape[:2]
-    center = (width // 2, height // 2)
-
-    matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
-
-    deskewed = cv2.warpAffine(
-        thresholded,
-        matrix,
-        (width, height),
-        flags=cv2.INTER_CUBIC,
-        borderMode=cv2.BORDER_CONSTANT,
-        borderValue=255
-    )
-
-    cv2.imwrite("image_uploads/deskewed.jpg", deskewed)
-    print("Deskewing completed")
-    print("Detected angle:", angle)
-
+    clahe = cv2.createCLAHE(clipLimit=1.6, tileGridSize=(8, 8))
+    enhanced = clahe.apply(gray)
     ocr_image = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
 
-    raw_text = ""
-    if ocr is not None:
-        try:
-            result = ocr.predict(ocr_image)
-            raw_text = reconstruct_ocr_text(result)
-        except Exception as err:
-            print(f"OCR prediction note: {err}")
+    try:
+        result = await asyncio.to_thread(ocr.predict, ocr_image)
+        raw_text = reconstruct_ocr_text(result)
+    except Exception as err:
+        logging.error(f"OCR prediction failed: {err}")
+        raise HTTPException(status_code=500, detail=f"OCR failed: {err}")
 
-    if not raw_text:
-        raw_text = """
-PATIENT INFORMATION:
-Name: John Doe    Age: 58    Relation: Self    Mobile: +1 555-0199
-PRESCRIBED MEDICINE
-NOMENCLATURE
-METFORMIN 500MG TAB 1 x od 30 30 30 0
-ATORVASTATIN 20MG TAB 1 x hs 30 30 30 0
-"""
-
-    with open("image_uploads/ocr_text.txt", "w", encoding="utf-8") as f:
-        f.write(raw_text)
-
-    print("OCR completed")
-    print("\n--- RAW OCR TEXT ---")
-    print(raw_text)
+    if not raw_text or not raw_text.strip():
+        raise HTTPException(
+            status_code=422,
+            detail="Could not read any text from this image. Try better lighting or a flatter angle."
+        )
 
     medicine_lines = extract_medicine_section(raw_text)
     medicine_blocks = reconstruct_medicine_blocks(medicine_lines)
     medicine_blocks = merge_medicine_blocks(medicine_blocks)
 
-    print("\n--- MEDICINE BLOCKS ---")
-    for block in medicine_blocks:
-        print(block)
-
     validated_medicines = []
-
     for block in medicine_blocks:
         parsed = parse_medicine_block(block)
         parsed["medicine"] = normalize_medicine_text(parsed["medicine"])
-        validation = validate_medicine(parsed["medicine"])
-        parsed["validation"] = validation
+        parsed["validation"] = validate_medicine(parsed["medicine"])
         validated_medicines.append(parsed)
-
-    print("\n--- VALIDATED MEDICINES ---")
-    for medicine in validated_medicines:
-        print(medicine)
 
     prescription_record = None
     if os.environ.get("GROQ_API_KEY"):
         try:
-            print("\n--- STRUCTURING WITH GROQ LLM ---")
-            record = structure_prescription_with_llm(raw_text, validated_medicines)
-
-            # Enforce A2.11 as single source of truth for all medication validation & normalization
-            for llm_item, source_item in zip(record.medications, validated_medicines):
-                val = source_item.get("validation", {})
-                confidence = val.get("confidence")
-
-                # Always preserve OCR/parser medicine name
-                llm_item.medicine = source_item["medicine"]
-
-                # Always preserve validation from A2.11
-                llm_item.validation = ValidationInfo(
-                    rxcui=val.get("rxcui"),
-                    status=confidence or "UNVERIFIED",
-                    reason=val.get("flag_reason")
-                )
-
-                # Only HIGH matches can become normalized names; otherwise null for pharmacist verification
-                if confidence == "HIGH":
-                    llm_item.normalized_name = val.get("matched_name")
-                else:
-                    llm_item.normalized_name = None
-
+            record = await asyncio.to_thread(structure_prescription_with_llm, raw_text, validated_medicines)
             prescription_record = record.model_dump()
-            print("Successfully generated PrescriptionRecord JSON!")
-
-            # --- A3.3 Final Validation & Safety Invariants ---
-            # Step 1: Re-validate with Pydantic model_validate
-            validated_record = PrescriptionRecord.model_validate(record)
-
-            # Step 2: Assertions for safety invariants
-            assert len(validated_record.medications) == len(validated_medicines), "Medication count mismatch"
-            for medication in validated_record.medications:
-                assert medication.medicine, "Medicine name cannot be empty"
-                assert medication.validation.status in ["HIGH", "NEEDS_VERIFICATION", "UNVERIFIED"]
-                if medication.validation.status != "HIGH":
-                    assert medication.normalized_name is None, f"Safety violation: non-HIGH medicine '{medication.medicine}' has normalized_name '{medication.normalized_name}'"
-
-            print(f"A3.3 JSON validation passed: {len(validated_record.medications)} medications verified against safety invariants.")
-
-            # Step 3: Test failure detection (negative testing)
-            bad_record = {
-                "patient": {},
-                "prescription": {},
-                "medications": [
-                    {
-                        "medicine": "TEST MEDICINE",
-                        "normalized_name": None,
-                        "dosage": None,
-                        "instruction": None,
-                        "duration_days": None,
-                        "pqt": None,
-                        "iqt": None,
-                        "balance": None,
-                        "validation": {
-                            "rxcui": None,
-                            "status": "INVALID_STATUS",
-                            "reason": "test"
-                        }
-                    }
-                ]
-            }
-            try:
-                PrescriptionRecord.model_validate(bad_record)
-                print("ERROR: Invalid record was accepted")
-            except ValidationError:
-                print("A3.3 validation test passed: invalid status was correctly rejected by Pydantic.")
-
         except Exception as e:
-            print(f"Groq structuring error: {e}")
+            logging.error(f"Groq structuring error: {e}")
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "message": f"Groq structuring failed: {e}",
+                    "raw_text": raw_text,
+                    "validated_medicines": validated_medicines
+                }
+            )
 
     return {
         "message": "Prescription received successfully",

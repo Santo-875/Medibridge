@@ -1,31 +1,41 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from pathlib import Path
 import shutil
 import uuid
+import os
 
-from sarvam_stt import transcribe_audio
+from sarvam_STT import transcribe_audio
 from llm_summary import generate_medical_summary
-
 
 app = FastAPI()
 
 AUDIO_DIR = Path("audio_uploads")
 AUDIO_DIR.mkdir(exist_ok=True)
 
-
 @app.post("/api/speech/upload")
 async def upload_audio(file: UploadFile = File(...)):
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "EMPTY_AUDIO", "message": "Uploaded audio file is empty"}
+        )
 
     file_id = str(uuid.uuid4())
-    file_path = AUDIO_DIR / f"{file_id}_{file.filename}"
+    ext = Path(file.filename or "recording.m4a").suffix or ".m4a"
+    file_path = AUDIO_DIR / f"{file_id}_{ext}"
 
     with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+        buffer.write(file_bytes)
 
-    # B4: Audio → Sarvam → Transcript
-    transcript = transcribe_audio(file_path)
+    try:
+        transcript = transcribe_audio(file_path)
+    except Exception as err:
+        raise HTTPException(
+            status_code=502,
+            detail={"code": "STT_FAILED", "message": str(err)}
+        )
 
-    # B5: Transcript → Gemini → Medical Summary
     summary = generate_medical_summary(transcript)
 
     return {
