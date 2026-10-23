@@ -48,7 +48,7 @@ fun ChatbotScreen(onBack: () -> Unit) {
         mutableStateListOf(
             ChatMessage(
                 id = "init",
-                text = "Hi! I'm Medi, your personal clinical medication assistant.\n\nAsk me about your medicines, dosage schedule, side effects, or drug interactions.",
+                text = "Hi! I'm Medi, your personal clinical and wellness assistant.\n\nHow can I help you today? Feel free to ask any health, wellness, or symptom questions.",
                 isBot = true
             )
         )
@@ -252,7 +252,7 @@ fun ChatbotScreen(onBack: () -> Unit) {
                     onValueChange = { messageText = it },
                     placeholder = {
                         Text(
-                            text = "Ask about medicines, dosage, or interactions...",
+                            text = "Ask a health question or wellness tip...",
                             style = MaterialTheme.typography.bodyMedium
                         )
                     },
@@ -633,11 +633,11 @@ private fun TypingIndicator(modifier: Modifier = Modifier) {
 }
 
 private val quickQuestions = listOf(
-    "How can I relieve a sudden headache?",
-    "What should I do if I miss a dose?",
-    "Can I take pain relievers with food or milk?",
-    "What are simple remedies for cold and cough?",
-    "Tips to safely manage mild fever at home"
+    "How can I improve my sleep quality?",
+    "Tips to stay well-hydrated throughout the day",
+    "Simple ways to reduce everyday stress",
+    "How can I relieve eye strain from screens?",
+    "Healthy habits for daily energy and wellness"
 )
 
 @Composable
