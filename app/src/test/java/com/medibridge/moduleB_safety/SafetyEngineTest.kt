@@ -31,7 +31,7 @@ class SafetyEngineTest {
         assertFalse("reviewRecommended should be false for safe medication", result.reviewRecommended)
         assertTrue(result.updatedMedication.crossVerified)
         assertFalse(result.updatedMedication.reviewRecommended)
-        assertEquals("No Known Conflict Detected", result.headline)
+        assertEquals("No issues detected by the checks available in this app", result.headline)
     }
 
     // ── 2. Duplicate Detection Test ──────────────────────────────────────────
@@ -168,7 +168,7 @@ class SafetyEngineTest {
 
     @Test
     fun testGeminiSafetyAnalyzer_usesFallbackWhenKeyIsPlaceholder() = runBlocking {
-        val analyzer = GeminiSafetyAnalyzer(apiKey = "YOUR_GEMINI_API_KEY_HERE")
+        val analyzer = GeminiSafetyAnalyzer(customApiKey = "YOUR_GEMINI_API_KEY_HERE")
         val scenario = MockSafetyRepository.demoScenarios.first { it.id == "case-1" } // Safe
         val evaluation = SafetyEngine.evaluateSafety(scenario.candidateMedication, baselineHistory)
         val aiInput = SafetyEngine.buildAiComparisonInput(scenario.candidateMedication, baselineHistory, evaluation)
@@ -313,6 +313,16 @@ class SafetyEngineTest {
 
         override suspend fun getSafetyCheckById(id: String): SafetyCheckEntity? =
             records.find { it.id == id }
+
+        override suspend fun getUnsyncedSafetyChecks(): List<SafetyCheckEntity> =
+            records.filter { !it.synced }
+
+        override suspend fun markSynced(id: String) {
+            val idx = records.indexOfFirst { it.id == id }
+            if (idx != -1) {
+                records[idx] = records[idx].copy(synced = true)
+            }
+        }
 
         override suspend fun deleteById(id: String) {
             records.removeAll { it.id == id }

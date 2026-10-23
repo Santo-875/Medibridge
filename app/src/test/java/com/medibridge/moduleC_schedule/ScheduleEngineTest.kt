@@ -95,13 +95,19 @@ class ScheduleEngineTest {
 
     @Test
     fun `test ambiguous unknown instruction recommends review and does not invent times`() {
-        val result = ScheduleEngine.generateSchedule("As needed when symptoms occur", "PRN")
+        val result = ScheduleEngine.generateSchedule("Take whenever you feel like", "random directive")
         assertTrue("Ambiguous instructions must recommend review", result.reviewRecommended)
         assertTrue("Must not invent slots for ambiguous directives", result.slots.isEmpty())
         assertNotNull(result.note)
     }
 
-    // ── Duration Tests ────────────────────────────────────────────────────────
+    @Test
+    fun `test as needed PRN schedule support`() {
+        val result = ScheduleEngine.generateSchedule("As needed when symptoms occur", "PRN")
+        assertFalse("PRN instructions do not require review", result.reviewRecommended)
+        assertTrue("Must not invent fixed slots for PRN directives", result.slots.isEmpty())
+        assertNotNull(result.note)
+    }
 
     @Test
     fun `test finite duration parsing`() {
@@ -125,16 +131,11 @@ class ScheduleEngineTest {
     fun `test isMedicationActive with finite and ongoing duration`() {
         val startDate = "2026-09-20"
 
-        // Within 7 days
         assertTrue(ScheduleEngine.isMedicationActive(startDate, "2026-09-24", "7 days"))
-        // After 7 days expired
         assertFalse(ScheduleEngine.isMedicationActive(startDate, "2026-09-28", "7 days"))
 
-        // Ongoing is always active
         assertTrue(ScheduleEngine.isMedicationActive(startDate, "2026-12-31", "Ongoing"))
     }
-
-    // ── Adherence Status Tests ────────────────────────────────────────────────
 
     @Test
     fun `test taken adherence status resolution`() {
@@ -152,7 +153,7 @@ class ScheduleEngineTest {
     }
 
     @Test
-    fun `test snoozed adherence status resolves to pending`() {
+    fun `test snoozed adherence status resolves to snoozed`() {
         val adherence = listOf(
             AdherenceRecord(date = "2026-09-25", status = "snoozed", slotTime = "08:00")
         )
@@ -163,7 +164,7 @@ class ScheduleEngineTest {
             slotTime = "08:00",
             now = LocalTime.of(8, 10)
         )
-        assertEquals(ReminderStatus.PENDING, status)
+        assertEquals(ReminderStatus.SNOOZED, status)
     }
 
     @Test
@@ -211,4 +212,7 @@ private class DummyMedicationDao : com.medibridge.core.db.MedicationDao {
     override suspend fun updateAdherence(id: String, adherenceJson: String) {}
     override fun getMedicationsNeedingVerification() = kotlinx.coroutines.flow.flowOf(emptyList<com.medibridge.core.db.MedicationEntity>())
     override fun getMedicationsWithConflicts() = kotlinx.coroutines.flow.flowOf(emptyList<com.medibridge.core.db.MedicationEntity>())
+    override fun getMedicationsForProfile(profileId: String) = kotlinx.coroutines.flow.flowOf(emptyList<com.medibridge.core.db.MedicationEntity>())
+    override suspend fun getUnsyncedMedications() = emptyList<com.medibridge.core.db.MedicationEntity>()
+    override suspend fun markSynced(id: String) {}
 }
