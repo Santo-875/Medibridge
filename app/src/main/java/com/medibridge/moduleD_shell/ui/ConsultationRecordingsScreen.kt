@@ -319,10 +319,18 @@ private fun RecordingCardItem(
         SimpleDateFormat("EEE, MMM d, yyyy • h:mm a", Locale.getDefault()).format(Date(recording.timestamp))
     }
 
-    val fileSizeMb = remember(recording.filePath) {
+    val audioExists = remember(recording.filePath) {
+        recording.filePath.isNotBlank() && File(recording.filePath).exists()
+    }
+
+    val fileSizeMb = remember(recording.filePath, audioExists) {
         try {
-            val f = File(recording.filePath)
-            if (f.exists()) String.format(Locale.US, "%.1f MB", f.length() / (1024f * 1024f)) else "Audio File"
+            if (audioExists) {
+                val f = File(recording.filePath)
+                String.format(Locale.US, "%.1f MB", f.length() / (1024f * 1024f))
+            } else {
+                "Audio Deleted"
+            }
         } catch (_: Exception) {
             "Audio File"
         }
@@ -418,99 +426,119 @@ private fun RecordingCardItem(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // ── Audio Player Controls Row ─────────────────────────────────────────
-            Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 10.dp)
+            if (audioExists) {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    // Playback progress slider
-                    val progressFraction = if (totalDurationMs > 0) {
-                        (currentPositionMs.toFloat() / totalDurationMs.toFloat()).coerceIn(0f, 1f)
-                    } else 0f
-
-                    Slider(
-                        value = progressFraction,
-                        onValueChange = onSeekToFraction,
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(28.dp),
-                        colors = SliderDefaults.colors(
-                            thumbColor = MaterialTheme.colorScheme.primary,
-                            activeTrackColor = MaterialTheme.colorScheme.primary,
-                            inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant
-                        )
-                    )
-
-                    // Time display + Control buttons
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                            .padding(horizontal = 14.dp, vertical = 10.dp)
                     ) {
-                        Text(
-                            text = formatMs(currentPositionMs),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        val progressFraction = if (totalDurationMs > 0) {
+                            (currentPositionMs.toFloat() / totalDurationMs.toFloat()).coerceIn(0f, 1f)
+                        } else 0f
+
+                        Slider(
+                            value = progressFraction,
+                            onValueChange = onSeekToFraction,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(28.dp),
+                            colors = SliderDefaults.colors(
+                                thumbColor = MaterialTheme.colorScheme.primary,
+                                activeTrackColor = MaterialTheme.colorScheme.primary,
+                                inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant
+                            )
                         )
 
-                        // Central buttons: -10s, Play/Pause, +10s
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // -10s button
-                            IconButton(
-                                onClick = onRewind10s,
-                                modifier = Modifier.size(36.dp)
+                            Text(
+                                text = formatMs(currentPositionMs),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Replay10,
-                                    contentDescription = "Rewind 10 seconds",
-                                    tint = MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.size(22.dp)
-                                )
+                                IconButton(
+                                    onClick = onRewind10s,
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Replay10,
+                                        contentDescription = "Rewind 10 seconds",
+                                        tint = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
+
+                                FilledIconButton(
+                                    onClick = onPlayPauseClick,
+                                    modifier = Modifier.size(44.dp),
+                                    colors = IconButtonDefaults.filledIconButtonColors(
+                                        containerColor = MaterialTheme.colorScheme.primary,
+                                        contentColor = MaterialTheme.colorScheme.onPrimary
+                                    )
+                                ) {
+                                    Icon(
+                                        imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                        contentDescription = if (isPlaying) "Pause" else "Play",
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
+
+                                IconButton(
+                                    onClick = onForward10s,
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Forward10,
+                                        contentDescription = "Forward 10 seconds",
+                                        tint = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
                             }
 
-                            // Play / Pause FAB
-                            FilledIconButton(
-                                onClick = onPlayPauseClick,
-                                modifier = Modifier.size(44.dp),
-                                colors = IconButtonDefaults.filledIconButtonColors(
-                                    containerColor = MaterialTheme.colorScheme.primary,
-                                    contentColor = MaterialTheme.colorScheme.onPrimary
-                                )
-                            ) {
-                                Icon(
-                                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                    contentDescription = if (isPlaying) "Pause" else "Play",
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            }
-
-                            // +10s button
-                            IconButton(
-                                onClick = onForward10s,
-                                modifier = Modifier.size(36.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Forward10,
-                                    contentDescription = "Forward 10 seconds",
-                                    tint = MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
+                            Text(
+                                text = formatMs(totalDurationMs),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
-
+                    }
+                }
+            } else {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = formatMs(totalDurationMs),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            text = "Audio deleted for privacy • Bilingual notes preserved",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer
                         )
                     }
                 }
@@ -569,18 +597,47 @@ private fun RecordingCardItem(
                             }
 
                             if (recording.transcript.isNotBlank()) {
-                                Text(
-                                    text = "Transcript:",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = recording.transcript,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
+                                val tamilPart = remember(recording.transcript) {
+                                    if (recording.transcript.contains("Tamil:")) {
+                                        recording.transcript.substringAfter("Tamil:").substringBefore("English:").trim()
+                                    } else ""
+                                }
+                                val englishPart = remember(recording.transcript) {
+                                    if (recording.transcript.contains("English:")) {
+                                        recording.transcript.substringAfter("English:").trim()
+                                    } else recording.transcript.trim()
+                                }
+
+                                if (tamilPart.isNotBlank()) {
+                                    Text(
+                                        text = "Spoken Tamil (தமிழ் உரை):",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = tamilPart,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                }
+
+                                if (englishPart.isNotBlank()) {
+                                    Text(
+                                        text = "Clinical Translation (English):",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = englishPart,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
                             }
                         }
                     }

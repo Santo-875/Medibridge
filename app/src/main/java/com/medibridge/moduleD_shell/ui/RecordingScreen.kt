@@ -10,6 +10,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -34,7 +35,10 @@ import androidx.core.content.ContextCompat
 import com.medibridge.core.db.AppDatabase
 import com.medibridge.core.db.RecordingEntity
 import com.medibridge.core.model.MedicationObject
+import com.medibridge.core.network.ApiSpeechSummary
 import com.medibridge.core.network.BackendClient
+import com.medibridge.core.network.SpeechSummarizeRequest
+import com.medibridge.core.network.SpeechUploadResponse
 import com.medibridge.core.pipeline.MedicationIngestionPipeline
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -102,9 +106,19 @@ fun RecordingScreen(
     var lastSummaryText      by remember { mutableStateOf<String?>(null) }
     var extractedMeds        by remember { mutableStateOf<List<MedicationObject>>(emptyList()) }
     var statusMessage        by remember { mutableStateOf<String?>(null) }
-    var selectedLanguageTab  by remember { mutableStateOf(0) } // 0=Tamil 1=English
+    var selectedLanguageTab  by remember { mutableStateOf(0) }
 
-    // Sub-tab: 0=Transcribed, 1=Raw/Untranslated
+    var isReviewingTranscript by remember { mutableStateOf(false) }
+    var activeBackendId      by remember { mutableStateOf<String?>(null) }
+    var reviewTamilText      by remember { mutableStateOf("") }
+    var reviewEnglishText    by remember { mutableStateOf("") }
+    var activeSummary        by remember { mutableStateOf<ApiSpeechSummary?>(null) }
+    var candidateMeds        by remember { mutableStateOf<List<MedicationObject>>(emptyList()) }
+    var selectedMedIndices   by remember { mutableStateOf<Set<Int>>(emptySet()) }
+    var deleteAudioForPrivacy by remember { mutableStateOf(true) }
+    var isReSummarizing      by remember { mutableStateOf(false) }
+    var reviewGridMode       by remember { mutableStateOf(0) }
+
     var selectedSubTab       by remember { mutableStateOf(0) }
 
     // Voice Storage dialog
@@ -191,22 +205,19 @@ fun RecordingScreen(
 
     suspend fun attemptBackendTranscription(
         file: File
-    ): Result<Triple<String, String, String>> {
+    ): Result<SpeechUploadResponse> {
         return try {
-            val reqBody  = file.asRequestBody("audio/m4a".toMediaTypeOrNull())
-            val part     = MultipartBody.Part.createFormData("file", file.name, reqBody)
-            val resp     = BackendClient.getService().uploadSpeech(part)
-            val tamil    = resp.transcriptTamil   ?: ""
-            val english  = resp.transcriptEnglish ?: resp.transcript ?: ""
-            val summary  = resp.summary
-            val notes    = summary?.doctorNotesSummary ?: summary?.diagnosis ?: ""
+            val reqBody = file.asRequestBody("audio/m4a".toMediaTypeOrNull())
+            val part = MultipartBody.Part.createFormData("file", file.name, reqBody)
+            val resp = BackendClient.getService().uploadSpeech(part)
+            val tamil = resp.transcriptTamil ?: ""
+            val english = resp.transcriptEnglish ?: resp.transcript ?: ""
             if (tamil.isBlank() && english.isBlank()) {
                 Result.failure(IllegalStateException("No transcription returned from audio."))
             } else {
-                Result.success(Triple(tamil, english, notes))
+                Result.success(resp)
             }
         } catch (e: Throwable) {
-            Log.w("RecordingScreen", "Backend transcription failed: ${e.message}")
             Result.failure(e)
         }
     }
@@ -215,12 +226,10 @@ fun RecordingScreen(
         try {
             mediaRecorder?.stop()
             mediaRecorder?.release()
-        } catch (e: Exception) {
-            Log.e("RecordingScreen", "Error stopping recorder", e)
-        }
-        mediaRecorder  = null
-        isRecording    = false
-        isProcessing   = true
+        } catch (_: Exception) {}
+        mediaRecorder = null
+        isRecording = false
+        isProcessing = true
         lastErrorMessage = null
 
         processingJob = scope.launch {
@@ -233,83 +242,43 @@ fun RecordingScreen(
                     }
 
                     if (backendResult.isSuccess) {
-                        val (tamil, english, notes) = backendResult.getOrThrow()
+                        val resp = backendResult.getOrThrow()
+                        activeBackendId = resp.id
+                        reviewTamilText = resp.transcriptTamil ?: ""
+                        reviewEnglishText = resp.transcriptEnglish ?: resp.transcript ?: ""
+                        activeSummary = resp.summary
 
-                        val combinedTranscript = buildString {
-                            if (tamil.isNotBlank())   append("Tamil:\n$tamil\n\n")
-                            if (english.isNotBlank()) append("English:\n$english")
-                        }.trim()
+                        val summary = resp.summary
+                        val meds = summary?.medications?.map { medItem ->
+                            BackendClient.mapSpeechMedicationToObject(medItem, summary)
+                        } ?: emptyList()
+                        candidateMeds = meds
+                        selectedMedIndices = meds.indices.toSet()
 
-                        val recEntity = RecordingEntity(
-                            timestamp  = System.currentTimeMillis(),
-                            filePath   = file.absolutePath,
-                            transcript = combinedTranscript,
-                            summary    = notes.ifBlank { combinedTranscript },
-                            status     = "transcribed"
-                        )
-                        val rowId = db.recordingDao().insertRecording(recEntity)
-                        Log.i("RecordingScreen", "Inserted transcribed RecordingEntity row=$rowId")
-
-                        lastTamilTranscript   = tamil.ifBlank { null }
-                        lastEnglishTranscript = english.ifBlank { null }
-                        lastSummaryText       = notes.ifBlank { null }
-                        statusMessage         = "Consultation transcribed and saved."
-
-                        try {
-                            val resp2    = BackendClient.getService().uploadSpeech(
-                                MultipartBody.Part.createFormData(
-                                    "file", file.name,
-                                    file.asRequestBody("audio/m4a".toMediaTypeOrNull())
-                                )
-                            )
-                            val summary2 = resp2.summary
-                            if (summary2 != null && summary2.medications.isNotEmpty()) {
-                                val bilingualSummary = buildString {
-                                    if (tamil.isNotBlank())   append("Tamil: $tamil\n")
-                                    if (english.isNotBlank()) append("English: $english\n")
-                                    if (notes.isNotBlank())   append("Notes: $notes")
-                                }.trim()
-                                val candidateMeds = summary2.medications.map { medItem ->
-                                    BackendClient.mapSpeechMedicationToObject(medItem, summary2).copy(
-                                        summary           = bilingualSummary,
-                                        consultationNotes = bilingualSummary
-                                    )
-                                }
-                                val evaluated = MedicationIngestionPipeline.evaluatePipeline(context, candidateMeds)
-                                MedicationIngestionPipeline.commitPipeline(context, evaluated)
-                                extractedMeds = candidateMeds
-                                statusMessage = "Transcribed & saved ${candidateMeds.size} medication(s)."
-                            }
-                        } catch (pipeEx: Exception) {
-                            Log.e("RecordingScreen", "Pipeline ingestion failed (non-fatal)", pipeEx)
-                        }
-
+                        isReviewingTranscript = true
+                        statusMessage = "Transcription ready. Please review below."
                     } else {
                         val err = backendResult.exceptionOrNull() ?: Exception("Transcription failed")
                         lastErrorMessage = extractSpeechErrorMessage(err)
                         val recEntity = RecordingEntity(
-                            timestamp  = System.currentTimeMillis(),
-                            filePath   = file.absolutePath,
+                            timestamp = System.currentTimeMillis(),
+                            filePath = file.absolutePath,
                             transcript = "",
-                            summary    = "",
-                            status     = "untranslated"
+                            summary = "",
+                            status = "untranslated"
                         )
-                        val rowId = db.recordingDao().insertRecording(recEntity)
-                        Log.w("RecordingScreen", "Backend unavailable — stored untranslated recording row=$rowId path=${file.absolutePath}")
+                        db.recordingDao().insertRecording(recEntity)
                         statusMessage = "Transcription failed: $lastErrorMessage"
-                        lastTamilTranscript   = null
+                        lastTamilTranscript = null
                         lastEnglishTranscript = null
-                        lastSummaryText       = null
+                        lastSummaryText = null
                     }
                 } else {
                     statusMessage = "No audio file captured."
                 }
-
-                Toast.makeText(context, "Recording saved", Toast.LENGTH_SHORT).show()
             } catch (_: CancellationException) {
                 statusMessage = "Processing cancelled."
             } catch (e: Throwable) {
-                Log.e("RecordingScreen", "Processing error during audio ingestion", e)
                 lastErrorMessage = extractSpeechErrorMessage(e)
                 statusMessage = "Error: $lastErrorMessage"
                 Toast.makeText(context, "Error saving recording", Toast.LENGTH_LONG).show()
@@ -317,6 +286,108 @@ fun RecordingScreen(
                 isProcessing = false
             }
         }
+    }
+
+    fun reSummarizeVerifiedTranscript() {
+        if (reviewEnglishText.isBlank()) return
+        isReSummarizing = true
+        scope.launch {
+            try {
+                val req = SpeechSummarizeRequest(
+                    transcriptEnglish = reviewEnglishText,
+                    transcriptTamil = reviewTamilText.ifBlank { null }
+                )
+                val summary = BackendClient.getService().summarizeSpeech(req)
+                activeSummary = summary
+                val meds = summary.medications.map { medItem ->
+                    BackendClient.mapSpeechMedicationToObject(medItem, summary)
+                }
+                candidateMeds = meds
+                selectedMedIndices = meds.indices.toSet()
+                Toast.makeText(context, "Summary refreshed from verified text", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(context, "Re-summarize failed: ${e.message}", Toast.LENGTH_SHORT).show()
+            } finally {
+                isReSummarizing = false
+            }
+        }
+    }
+
+    fun confirmAndSaveConsultation() {
+        val file = currentAudioFile
+        scope.launch {
+            try {
+                val combinedTranscript = buildString {
+                    if (reviewTamilText.isNotBlank()) append("Tamil:\n$reviewTamilText\n\n")
+                    if (reviewEnglishText.isNotBlank()) append("English:\n$reviewEnglishText")
+                }.trim()
+
+                val notes = activeSummary?.doctorNotesSummary
+                    ?: activeSummary?.diagnosis
+                    ?: combinedTranscript
+
+                val targetPath = if (deleteAudioForPrivacy || file == null) "" else file.absolutePath
+
+                val recEntity = RecordingEntity(
+                    timestamp = System.currentTimeMillis(),
+                    filePath = targetPath,
+                    transcript = combinedTranscript,
+                    summary = notes,
+                    status = "transcribed"
+                )
+                db.recordingDao().insertRecording(recEntity)
+
+                if (candidateMeds.isNotEmpty() && selectedMedIndices.isNotEmpty()) {
+                    val medsToCommit = candidateMeds.filterIndexed { index, _ -> index in selectedMedIndices }.map { med ->
+                        med.copy(
+                            summary = combinedTranscript,
+                            consultationNotes = notes
+                        )
+                    }
+                    val evaluated = MedicationIngestionPipeline.evaluatePipeline(context, medsToCommit)
+                    MedicationIngestionPipeline.commitPipeline(context, evaluated)
+                    extractedMeds = medsToCommit
+                }
+
+                if (deleteAudioForPrivacy) {
+                    if (file != null && file.exists()) {
+                        file.delete()
+                    }
+                    val backendId = activeBackendId
+                    if (!backendId.isNullOrBlank()) {
+                        try {
+                            BackendClient.getService().deleteSpeechAudio(backendId)
+                        } catch (_: Exception) {}
+                    }
+                }
+
+                lastTamilTranscript = reviewTamilText.ifBlank { null }
+                lastEnglishTranscript = reviewEnglishText.ifBlank { null }
+                lastSummaryText = notes
+                isReviewingTranscript = false
+                currentAudioFile = null
+                statusMessage = if (deleteAudioForPrivacy) {
+                    "Consultation saved! Audio permanently deleted for privacy."
+                } else {
+                    "Consultation and audio recording saved."
+                }
+                Toast.makeText(context, "Consultation verified & saved", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(context, "Failed to save: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    fun discardConsultation() {
+        try {
+            currentAudioFile?.let { if (it.exists()) it.delete() }
+        } catch (_: Exception) {}
+        currentAudioFile = null
+        isReviewingTranscript = false
+        activeBackendId = null
+        candidateMeds = emptyList()
+        selectedMedIndices = emptySet()
+        statusMessage = "Consultation discarded."
     }
 
     fun retryTranscription(recording: RecordingEntity) {
@@ -333,16 +404,19 @@ fun RecordingScreen(
                     attemptBackendTranscription(file)
                 }
                 if (result.isSuccess) {
-                    val (tamil, english, notes) = result.getOrThrow()
+                    val resp = result.getOrThrow()
+                    val tamil = resp.transcriptTamil ?: ""
+                    val english = resp.transcriptEnglish ?: resp.transcript ?: ""
+                    val notes = resp.summary?.doctorNotesSummary ?: resp.summary?.diagnosis ?: ""
                     val combined = buildString {
-                        if (tamil.isNotBlank())   append("Tamil:\n$tamil\n\n")
+                        if (tamil.isNotBlank()) append("Tamil:\n$tamil\n\n")
                         if (english.isNotBlank()) append("English:\n$english")
                     }.trim()
                     db.recordingDao().updateTranscript(
-                        id         = recording.id,
+                        id = recording.id,
                         transcript = combined,
-                        summary    = notes.ifBlank { combined },
-                        status     = "transcribed"
+                        summary = notes.ifBlank { combined },
+                        status = "transcribed"
                     )
                     Toast.makeText(context, "Transcription succeeded!", Toast.LENGTH_SHORT).show()
                 } else {
@@ -492,95 +566,372 @@ fun RecordingScreen(
                 }
             }
 
-            // ── Recording Controls Card ────────────────────────────────────
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape    = RoundedCornerShape(20.dp),
-                    colors   = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-                    )
-                ) {
-                    Column(
-                        modifier            = Modifier.fillMaxWidth().padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+            if (isReviewingTranscript) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(20.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surface
+                        ),
+                        border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f))
                     ) {
-                        val minutes    = recordingDurationSeconds / 60
-                        val seconds    = recordingDurationSeconds % 60
-                        val timerText  = String.format(Locale.US, "%02d:%02d", minutes, seconds)
-
-                        Text(
-                            text  = if (isRecording) timerText else if (isProcessing) "Processing..." else "Ready to Record",
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = if (isRecording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
-                        )
-                        Spacer(Modifier.height(12.dp))
-
-                        LiveWaveform(isRecording = isRecording)
-
-                        Spacer(Modifier.height(16.dp))
-
-                        Box(contentAlignment = Alignment.Center, modifier = Modifier.size(120.dp)) {
-                            if (isRecording) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(110.dp)
-                                        .scale(pulseScale)
-                                        .clip(CircleShape)
-                                        .background(MaterialTheme.colorScheme.error.copy(alpha = 0.25f))
-                                )
-                            }
-                            FilledIconButton(
-                                onClick = {
-                                    if (isRecording) stopRecording()
-                                    else if (!isProcessing) startRecording()
-                                },
-                                modifier = Modifier.size(80.dp),
-                                colors   = IconButtonDefaults.filledIconButtonColors(
-                                    containerColor = if (isRecording) MaterialTheme.colorScheme.error
-                                    else MaterialTheme.colorScheme.primary
-                                ),
-                                enabled = !isProcessing
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                if (isProcessing) {
-                                    CircularProgressIndicator(
-                                        color     = Color.White,
-                                        modifier  = Modifier.size(36.dp),
-                                        strokeWidth = 3.dp
-                                    )
-                                } else {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(
-                                        imageVector        = if (isRecording) Icons.Filled.Stop else Icons.Filled.Mic,
-                                        contentDescription = if (isRecording) "Stop Recording" else "Start Recording",
-                                        tint               = Color.White,
-                                        modifier           = Modifier.size(40.dp)
+                                        imageVector = Icons.Default.Verified,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(24.dp)
                                     )
+                                    Spacer(Modifier.width(8.dp))
+                                    Column {
+                                        Text(
+                                            text = "Review & Verify Consultation",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            text = "Review bilingual transcripts before committing to schedule",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(Modifier.height(14.dp))
+
+                            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                                SegmentedButton(
+                                    selected = reviewGridMode == 0,
+                                    onClick = { reviewGridMode = 0 },
+                                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 3)
+                                ) {
+                                    Text("Dual View", style = MaterialTheme.typography.labelSmall)
+                                }
+                                SegmentedButton(
+                                    selected = reviewGridMode == 1,
+                                    onClick = { reviewGridMode = 1 },
+                                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 3)
+                                ) {
+                                    Text("தமிழ்", style = MaterialTheme.typography.labelSmall)
+                                }
+                                SegmentedButton(
+                                    selected = reviewGridMode == 2,
+                                    onClick = { reviewGridMode = 2 },
+                                    shape = SegmentedButtonDefaults.itemShape(index = 2, count = 3)
+                                ) {
+                                    Text("English", style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+
+                            Spacer(Modifier.height(12.dp))
+
+                            if (reviewGridMode == 0 || reviewGridMode == 1) {
+                                OutlinedTextField(
+                                    value = reviewTamilText,
+                                    onValueChange = { reviewTamilText = it },
+                                    label = { Text("Spoken Tamil (தமிழ் உரை)") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    minLines = 3,
+                                    maxLines = 6,
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+                                Spacer(Modifier.height(8.dp))
+                            }
+
+                            if (reviewGridMode == 0 || reviewGridMode == 2) {
+                                OutlinedTextField(
+                                    value = reviewEnglishText,
+                                    onValueChange = { reviewEnglishText = it },
+                                    label = { Text("Clinical Translation (English)") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    minLines = 3,
+                                    maxLines = 6,
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+                                Spacer(Modifier.height(8.dp))
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End
+                            ) {
+                                TextButton(
+                                    onClick = { reSummarizeVerifiedTranscript() },
+                                    enabled = !isReSummarizing && reviewEnglishText.isNotBlank()
+                                ) {
+                                    if (isReSummarizing) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(16.dp),
+                                            strokeWidth = 2.dp
+                                        )
+                                        Spacer(Modifier.width(6.dp))
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Default.Refresh,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(Modifier.width(4.dp))
+                                    }
+                                    Text("Re-Summarize Verified Text")
+                                }
+                            }
+
+                            if (candidateMeds.isNotEmpty()) {
+                                Spacer(Modifier.height(12.dp))
+                                Text(
+                                    text = "Extracted Medications (${candidateMeds.size}):",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                candidateMeds.forEachIndexed { index, med ->
+                                    val isChecked = index in selectedMedIndices
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = if (isChecked) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+                                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 4.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable {
+                                                    selectedMedIndices = if (isChecked) {
+                                                        selectedMedIndices - index
+                                                    } else {
+                                                        selectedMedIndices + index
+                                                    }
+                                                }
+                                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Checkbox(
+                                                checked = isChecked,
+                                                onCheckedChange = { checked ->
+                                                    selectedMedIndices = if (checked) {
+                                                        selectedMedIndices + index
+                                                    } else {
+                                                        selectedMedIndices - index
+                                                    }
+                                                }
+                                            )
+                                            Spacer(Modifier.width(6.dp))
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = "${med.name} ${med.strength}".trim(),
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                                Text(
+                                                    text = listOf(med.frequency, med.timing, med.duration)
+                                                        .filter { it.isNotBlank() }
+                                                        .joinToString(" • "),
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            val adviceList = activeSummary?.adviceAndPrecautions ?: emptyList()
+                            if (adviceList.isNotEmpty()) {
+                                Spacer(Modifier.height(10.dp))
+                                Text(
+                                    text = "Clinical Precautions & Advice:",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                adviceList.forEach { advice ->
+                                    Row(modifier = Modifier.padding(vertical = 2.dp)) {
+                                        Text("• ", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                                        Text(advice, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
+
+                            Spacer(Modifier.height(14.dp))
+
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(
+                                        modifier = Modifier.weight(1f),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Lock,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Spacer(Modifier.width(10.dp))
+                                        Column {
+                                            Text(
+                                                text = "Delete Audio for Privacy",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            Text(
+                                                text = "Permanently removes voice file; preserves bilingual notes",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                    Switch(
+                                        checked = deleteAudioForPrivacy,
+                                        onCheckedChange = { deleteAudioForPrivacy = it }
+                                    )
+                                }
+                            }
+
+                            Spacer(Modifier.height(16.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = { discardConsultation() },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("Discard")
+                                }
+                                Button(
+                                    onClick = { confirmAndSaveConsultation() },
+                                    modifier = Modifier.weight(2f)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Confirm & Save")
                                 }
                             }
                         }
-                        Spacer(Modifier.height(16.dp))
-                        Text(
-                            text = when {
-                                isRecording  -> "Recording audio... Tap red button to finish"
-                                isProcessing -> "Uploading audio to backend & translating..."
-                                else         -> "Tap the microphone to begin consultation recording"
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                }
+            } else {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape    = RoundedCornerShape(20.dp),
+                        colors   = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
                         )
-                        if (isProcessing) {
+                    ) {
+                        Column(
+                            modifier            = Modifier.fillMaxWidth().padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            val minutes    = recordingDurationSeconds / 60
+                            val seconds    = recordingDurationSeconds % 60
+                            val timerText  = String.format(Locale.US, "%02d:%02d", minutes, seconds)
+
+                            Text(
+                                text  = if (isRecording) timerText else if (isProcessing) "Processing..." else "Ready to Record",
+                                style = MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isRecording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                            )
                             Spacer(Modifier.height(12.dp))
-                            OutlinedButton(
-                                onClick = {
-                                    processingJob?.cancel()
-                                    isProcessing = false
-                                    statusMessage = "Processing cancelled."
+
+                            LiveWaveform(isRecording = isRecording)
+
+                            Spacer(Modifier.height(16.dp))
+
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(120.dp)) {
+                                if (isRecording) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(110.dp)
+                                            .scale(pulseScale)
+                                            .clip(CircleShape)
+                                            .background(MaterialTheme.colorScheme.error.copy(alpha = 0.25f))
+                                    )
                                 }
-                            ) {
-                                Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text("Cancel")
+                                FilledIconButton(
+                                    onClick = {
+                                        if (isRecording) stopRecording()
+                                        else if (!isProcessing) startRecording()
+                                    },
+                                    modifier = Modifier.size(80.dp),
+                                    colors   = IconButtonDefaults.filledIconButtonColors(
+                                        containerColor = if (isRecording) MaterialTheme.colorScheme.error
+                                        else MaterialTheme.colorScheme.primary
+                                    ),
+                                    enabled = !isProcessing
+                                ) {
+                                    if (isProcessing) {
+                                        CircularProgressIndicator(
+                                            color     = Color.White,
+                                            modifier  = Modifier.size(36.dp),
+                                            strokeWidth = 3.dp
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector        = if (isRecording) Icons.Filled.Stop else Icons.Filled.Mic,
+                                            contentDescription = if (isRecording) "Stop Recording" else "Start Recording",
+                                            tint               = Color.White,
+                                            modifier           = Modifier.size(40.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(16.dp))
+                            Text(
+                                text = when {
+                                    isRecording  -> "Recording audio... Tap red button to finish"
+                                    isProcessing -> "Uploading audio to backend & translating..."
+                                    else         -> "Tap the microphone to begin consultation recording"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            if (isProcessing) {
+                                Spacer(Modifier.height(12.dp))
+                                OutlinedButton(
+                                    onClick = {
+                                        processingJob?.cancel()
+                                        isProcessing = false
+                                        statusMessage = "Processing cancelled."
+                                    }
+                                ) {
+                                    Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Cancel")
+                                }
                             }
                         }
                     }
@@ -878,11 +1229,28 @@ private fun RecordingHistoryCard(recording: RecordingEntity) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(6.dp))
-                Text(
-                    text  = "Audio: ${recording.filePath}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                )
+                if (recording.filePath.isNotBlank() && File(recording.filePath).exists()) {
+                    Text(
+                        text = "Audio: ${recording.filePath}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    )
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.tertiary,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = "Audio deleted for privacy • Transcript preserved",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.tertiary
+                        )
+                    }
+                }
             }
         }
     }

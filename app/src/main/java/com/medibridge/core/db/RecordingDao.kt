@@ -50,4 +50,7 @@ interface RecordingDao {
 
     @Query("DELETE FROM recordings WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    @Query("UPDATE recordings SET filePath = '' WHERE id = :id")
+    suspend fun clearAudioPath(id: Long)
 }

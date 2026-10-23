@@ -419,6 +419,58 @@ async def upload_speech(
         "summary": summary
     }
 
+class SpeechSummarizeRequest(BaseModel):
+    transcript_english: str
+    transcript_tamil: Optional[str] = None
+
+@app.post("/api/speech/summarize")
+async def summarize_speech(request: SpeechSummarizeRequest):
+    eng = request.transcript_english.strip()
+    if not eng:
+        raise HTTPException(status_code=400, detail="English transcript cannot be empty")
+    from speech_to_text.llm_summary import generate_medical_summary
+    try:
+        summary = generate_medical_summary(eng)
+        if summary and not summary.get("summary_failed"):
+            prefix = ""
+            if request.transcript_tamil:
+                prefix += f"Tamil: {request.transcript_tamil.strip()}\n"
+            prefix += f"English: {eng}\n"
+            summary["doctor_notes_summary"] = prefix + (summary.get("doctor_notes_summary") or "")
+        return summary
+    except Exception as e:
+        return {
+            "summary_failed": True,
+            "error": str(e),
+            "raw_transcript": eng,
+            "doctor_notes_summary": f"English: {eng}",
+            "chief_complaints": [],
+            "symptoms": [],
+            "diagnosis": None,
+            "medications": [],
+            "advice_and_precautions": [],
+            "follow_up": None
+        }
+
+@app.delete("/api/speech/{recording_id}/audio")
+async def delete_speech_audio(recording_id: str):
+    db = next(get_db())
+    try:
+        rec = db.query(Recording).filter(Recording.id == recording_id).first()
+        if not rec:
+            raise HTTPException(status_code=404, detail="Recording not found")
+        if rec.file_path and os.path.exists(rec.file_path):
+            try:
+                os.remove(rec.file_path)
+            except Exception:
+                pass
+        rec.file_path = ""
+        rec.updated_at = utcnow()
+        db.commit()
+        return {"status": "AUDIO_DELETED", "id": recording_id}
+    finally:
+        db.close()
+
 class ChatRequest(BaseModel):
     message: str
     patient_context: Optional[str] = None

@@ -104,7 +104,10 @@ data class ApiSpeechMedication(
     val instructions: String? = null
 )
 
-// ── Retrofit API Interface ───────────────────────────────────────────────────
+data class SpeechSummarizeRequest(
+    @SerializedName("transcript_english") val transcriptEnglish: String,
+    @SerializedName("transcript_tamil") val transcriptTamil: String? = null
+)
 
 interface BackendApiService {
 
@@ -125,6 +128,16 @@ interface BackendApiService {
     suspend fun uploadSpeech(
         @Part file: MultipartBody.Part
     ): SpeechUploadResponse
+
+    @POST("api/speech/summarize")
+    suspend fun summarizeSpeech(
+        @Body request: SpeechSummarizeRequest
+    ): ApiSpeechSummary
+
+    @DELETE("api/speech/{id}/audio")
+    suspend fun deleteSpeechAudio(
+        @Path("id") id: String
+    ): Map<String, String>
 
     @POST("auth/register")
     suspend fun register(
