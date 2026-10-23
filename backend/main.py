@@ -395,6 +395,81 @@ async def upload_speech(
         "summary": summary
     }
 
+class ChatRequest(BaseModel):
+    message: str
+    patient_context: Optional[str] = None
+
+class ChatResponse(BaseModel):
+    reply: str
+    source: str
+
+@app.post("/api/chat", response_model=ChatResponse)
+async def chat_with_medi_ai(request: ChatRequest):
+    msg = request.message.strip()
+    if not msg:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    prompt = f"""You are Medi, an intelligent, empathetic clinical medication and healthcare assistant inside the MediBridge app.
+Provide accurate, compassionate, and medically sound guidance to the patient.
+
+GUIDELINES:
+1. Directly and helpfully answer the patient's question in a clear, friendly, conversational tone.
+2. If the patient asks about their medications, schedule, or safety, reference their patient context below.
+3. If they ask general medical or healthcare questions (e.g. headaches, fever, diet, sleep, wound care, cold, hydration), explain clearly and concisely with practical advice.
+4. If they describe red-flag emergency symptoms (severe chest pain, sudden numbness/paralysis, difficulty breathing, severe bleeding), immediately urge emergency care (call emergency services or visit the nearest ER).
+5. Format your response cleanly using markdown (bold headings, bullet points •) for readability on mobile screens. Keep paragraphs crisp and easy to scan.
+
+--- PATIENT REGIMEN CONTEXT ---
+{request.patient_context or "No active prescription medications registered."}
+
+--- PATIENT QUESTION ---
+{msg}
+"""
+
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if gemini_key and gemini_key != "your_gemini_api_key_here":
+        try:
+            from google import genai
+            client = genai.Client(api_key=gemini_key)
+            resp = await asyncio.to_thread(
+                client.models.generate_content,
+                model="gemini-3.5-flash",
+                contents=prompt
+            )
+            if resp and resp.text and resp.text.strip():
+                return ChatResponse(reply=resp.text.strip(), source="gemini")
+        except Exception as e:
+            logging.warning(f"Gemini chat failed: {e}")
+
+    groq_key = os.getenv("GROQ_API_KEY")
+    if groq_key:
+        try:
+            from groq import Groq
+            groq_client = Groq(api_key=groq_key)
+            models = ["openai/gpt-oss-20b", "qwen/qwen3.8-27b", "openai/gpt-oss-120b"]
+            for m in models:
+                try:
+                    def _call_groq(model_name):
+                        return groq_client.chat.completions.create(
+                            model=model_name,
+                            messages=[
+                                {"role": "system", "content": "You are Medi, a compassionate clinical healthcare and medication AI assistant."},
+                                {"role": "user", "content": prompt}
+                            ],
+                            temperature=0.3,
+                            max_completion_tokens=1024
+                        )
+                    completion = await asyncio.to_thread(_call_groq, m)
+                    content = completion.choices[0].message.content
+                    if content and content.strip():
+                        return ChatResponse(reply=content.strip(), source="groq")
+                except Exception:
+                    continue
+        except Exception as e:
+            logging.warning(f"Groq chat failed: {e}")
+
+    raise HTTPException(status_code=502, detail="AI services are temporarily unavailable. Please try again shortly.")
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

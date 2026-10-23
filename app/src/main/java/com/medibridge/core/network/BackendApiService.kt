@@ -168,7 +168,22 @@ interface BackendApiService {
     suspend fun registerDevice(
         @Body request: DeviceRegisterRequest
     ): Map<String, Any>
+
+    @POST("api/chat")
+    suspend fun chatWithAi(
+        @Body request: ChatApiRequest
+    ): ChatApiResponse
 }
+
+data class ChatApiRequest(
+    val message: String,
+    @SerializedName("patient_context") val patientContext: String? = null
+)
+
+data class ChatApiResponse(
+    val reply: String,
+    val source: String? = null
+)
 
 // ── Backend Repository & Mapping ─────────────────────────────────────────────
 
