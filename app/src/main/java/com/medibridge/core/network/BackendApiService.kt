@@ -30,6 +30,7 @@ data class PrescriptionUploadResponse(
     val filename: String? = null,
     @SerializedName("content_type") val contentType: String? = null,
     val size: Long? = null,
+    @SerializedName("raw_text") val rawText: String? = null,
     @SerializedName("prescription_record") val prescriptionRecord: ApiPrescriptionRecord? = null
 )
 

@@ -62,6 +62,12 @@ import retrofit2.HttpException
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.asRequestBody
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.sp
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
@@ -70,31 +76,119 @@ sealed class ScannerUiState {
     object Camera : ScannerUiState()
     data class Analyzing(val status: String = "Analyzing prescription or bill...") : ScannerUiState()
     data class Review(val items: List<MedicationIngestionPipeline.PipelineResultItem>) : ScannerUiState()
-    data class Error(val message: String) : ScannerUiState()
+    data class Error(
+        val title: String = "Processing Failed",
+        val message: String,
+        val technicalDetails: String? = null
+    ) : ScannerUiState()
 }
 
-private fun extractErrorMessage(e: Throwable): String {
+private fun extractDetailedError(e: Throwable): ScannerUiState.Error {
+    Log.e("ScannerScreen", "Detailed scan error caught", e)
+
     if (e is TimeoutCancellationException) {
-        return "Scan timed out after 45 seconds. Try a clearer or smaller photo."
+        val serverUrl = BackendClient.getBaseUrl()
+        return ScannerUiState.Error(
+            title = "Scan Timed Out (45s)",
+            message = "The prescription scan exceeded 45 seconds. The server might be busy or PaddleOCR is taking longer to process the image.",
+            technicalDetails = "Exception: TimeoutCancellationException\nDuration: 45,000 ms\nTarget Server: $serverUrl\nSuggestion: Ensure backend server and ngrok tunnel are running."
+        )
     }
+
     if (e is HttpException) {
-        try {
-            val body = e.response()?.errorBody()?.string()
-            if (!body.isNullOrBlank()) {
-                val json = JSONObject(body)
+        val code = e.code()
+        val errorBodyStr = try {
+            e.response()?.errorBody()?.string()
+        } catch (_: Exception) {
+            null
+        }
+        val requestUrl = e.response()?.raw()?.request?.url?.toString() ?: BackendClient.getBaseUrl()
+
+        var userMsg = "HTTP $code: ${e.message()}"
+        var rawTextFromBackend: String? = null
+
+        if (!errorBodyStr.isNullOrBlank()) {
+            try {
+                val json = JSONObject(errorBodyStr)
                 if (json.has("detail")) {
-                    val detail = json.get("detail")
-                    if (detail is JSONObject && detail.has("message")) {
-                        return detail.getString("message")
+                    val detailObj = json.get("detail")
+                    if (detailObj is JSONObject) {
+                        if (detailObj.has("message")) {
+                            userMsg = detailObj.getString("message")
+                        }
+                        if (detailObj.has("raw_text")) {
+                            rawTextFromBackend = detailObj.getString("raw_text")
+                        }
+                    } else {
+                        userMsg = detailObj.toString()
                     }
-                    return detail.toString()
                 } else if (json.has("message")) {
-                    return json.getString("message")
+                    userMsg = json.getString("message")
                 }
+            } catch (_: Exception) {
+                userMsg = errorBodyStr
             }
-        } catch (_: Exception) {}
+        }
+
+        val tech = buildString {
+            appendLine("HTTP Status: $code ${e.message()}")
+            appendLine("Target URL: $requestUrl")
+            if (!rawTextFromBackend.isNullOrBlank()) {
+                appendLine("\n--- OCR Text Detected by Backend ---")
+                appendLine(rawTextFromBackend)
+            }
+            appendLine("\n--- Full Server Response Body ---")
+            appendLine(errorBodyStr ?: "(empty response body)")
+        }
+
+        return ScannerUiState.Error(
+            title = "Server Error (HTTP $code)",
+            message = userMsg,
+            technicalDetails = tech
+        )
     }
-    return e.localizedMessage ?: e.message ?: "Failed to process prescription image."
+
+    if (e is java.net.ConnectException || e is java.net.UnknownHostException) {
+        val serverUrl = BackendClient.getBaseUrl()
+        return ScannerUiState.Error(
+            title = "Connection Failed",
+            message = "Could not reach backend server at:\n$serverUrl\nCheck your connection and verify the backend / ngrok tunnel is active.",
+            technicalDetails = "Exception: ${e::class.java.name}\nMessage: ${e.message}\nTarget Server: $serverUrl"
+        )
+    }
+
+    if (e is java.net.SocketTimeoutException) {
+        val serverUrl = BackendClient.getBaseUrl()
+        return ScannerUiState.Error(
+            title = "Network Socket Timeout",
+            message = "Network connection timed out waiting for server response.",
+            technicalDetails = "Exception: java.net.SocketTimeoutException\nMessage: ${e.message}\nTarget Server: $serverUrl"
+        )
+    }
+
+    if (e is IllegalStateException) {
+        val msg = e.message ?: "No medications found"
+        return ScannerUiState.Error(
+            title = "Prescription Processing Issue",
+            message = msg,
+            technicalDetails = "Exception: java.lang.IllegalStateException\nMessage: $msg"
+        )
+    }
+
+    val tech = buildString {
+        appendLine("Exception: ${e::class.java.name}")
+        appendLine("Message: ${e.localizedMessage ?: e.message}")
+        appendLine("\nStacktrace:")
+        e.stackTrace.take(8).forEach {
+            appendLine("  at ${it.className}.${it.methodName}(${it.fileName}:${it.lineNumber})")
+        }
+    }
+
+    return ScannerUiState.Error(
+        title = "Unexpected Error",
+        message = e.localizedMessage ?: e.message ?: "An unexpected error occurred during processing.",
+        technicalDetails = tech
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -153,7 +247,7 @@ fun ScannerScreen(
                 } catch (_: CancellationException) {
                     uiState = ScannerUiState.Camera
                 } catch (e: Throwable) {
-                    uiState = ScannerUiState.Error(extractErrorMessage(e))
+                    uiState = extractDetailedError(e)
                 }
             }
         }
@@ -312,14 +406,14 @@ fun ScannerScreen(
                                                             } catch (_: CancellationException) {
                                                                 uiState = ScannerUiState.Camera
                                                             } catch (e: Throwable) {
-                                                                uiState = ScannerUiState.Error(extractErrorMessage(e))
+                                                                uiState = extractDetailedError(e)
                                                             }
                                                         }
                                                     }
 
                                                     override fun onError(exception: ImageCaptureException) {
                                                         Log.e("ScannerScreen", "Photo capture failed", exception)
-                                                        uiState = ScannerUiState.Error("Photo capture failed: ${exception.message}")
+                                                        uiState = extractDetailedError(exception)
                                                     }
                                                 }
                                             )
@@ -421,9 +515,11 @@ fun ScannerScreen(
                 }
 
                 is ScannerUiState.Error -> {
+                    val clipboardManager = LocalClipboardManager.current
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
                             .padding(24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
@@ -436,18 +532,85 @@ fun ScannerScreen(
                         )
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            text = "Prescription Processing Failed",
-                            style = MaterialTheme.typography.titleMedium,
+                            text = state.title,
+                            style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onBackground
+                            color = MaterialTheme.colorScheme.error,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             text = state.message,
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = MaterialTheme.colorScheme.onSurface,
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center
                         )
+
+                        if (!state.technicalDetails.isNullOrBlank()) {
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                ),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(12.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "EXACT ERROR DETAILS",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        TextButton(
+                                            onClick = {
+                                                clipboardManager.setText(AnnotatedString(state.technicalDetails))
+                                                Toast.makeText(context, "Error details copied to clipboard", Toast.LENGTH_SHORT).show()
+                                            },
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.ContentCopy,
+                                                contentDescription = "Copy",
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Copy", style = MaterialTheme.typography.labelSmall)
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .background(
+                                                MaterialTheme.colorScheme.surface,
+                                                RoundedCornerShape(6.dp)
+                                            )
+                                            .border(
+                                                1.dp,
+                                                MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                                                RoundedCornerShape(6.dp)
+                                            )
+                                            .padding(10.dp)
+                                    ) {
+                                        Text(
+                                            text = state.technicalDetails,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
                         Spacer(modifier = Modifier.height(24.dp))
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -803,7 +966,14 @@ private suspend fun processDocumentAndPipeline(
                 }
                 candidateMeds.addAll(mapped)
             } else {
-                throw IllegalStateException("No medications could be extracted from this document. Please ensure the prescription text is sharp and well-lit.")
+                val detectedText = response.rawText?.trim()
+                val details = if (!detectedText.isNullOrBlank()) {
+                    val preview = if (detectedText.length > 200) detectedText.take(200) + "..." else detectedText
+                    "No medications recognized in document.\n\nOCR Read Text:\n\"$preview\"\n\nPlease ensure you are scanning a doctor's prescription with clear medication names and dosages."
+                } else {
+                    "No medications could be extracted from this document. Please ensure the prescription text is sharp and well-lit."
+                }
+                throw IllegalStateException(details)
             }
         } catch (e: Exception) {
             Log.e("ScannerScreen", "Prescription OCR processing error: ${e.message}", e)

@@ -278,6 +278,16 @@ async def upload_prescription(
             medications=medication_items
         )
 
+    if not record or not record.medications:
+        preview = (raw_text[:120] + "...") if len(raw_text) > 120 else raw_text
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": f"No medications found in document. Detected text: '{preview}'. Please ensure you scan a valid prescription.",
+                "raw_text": raw_text
+            }
+        )
+
     db = next(get_db())
     try:
         db_presc = Prescription(
@@ -300,6 +310,7 @@ async def upload_prescription(
         "id": file_id,
         "message": "Prescription analyzed successfully",
         "filename": file.filename,
+        "raw_text": raw_text,
         "prescription_record": record.model_dump()
     }
 

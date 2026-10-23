@@ -528,6 +528,16 @@ async def upload_prescription(file: UploadFile = File(...)):
                 }
             )
 
+    if prescription_record is not None and not prescription_record.get("medications"):
+        preview = (raw_text[:120] + "...") if len(raw_text) > 120 else raw_text
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": f"No medications found in document. Detected text: '{preview}'. Please ensure you scan a valid prescription.",
+                "raw_text": raw_text
+            }
+        )
+
     return {
         "message": "Prescription received successfully",
         "filename": file.filename,
