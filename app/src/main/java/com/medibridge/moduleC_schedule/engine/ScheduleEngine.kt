@@ -43,16 +43,28 @@ object ScheduleEngine {
     const val TIME_AFTER_DINNER = "20:30"
     const val TIME_BEDTIME = "22:00"
 
-    /**
-     * Dynamically generates schedule slots from prescription frequency and timing instructions.
-     */
+    fun isAsNeeded(frequency: String, timing: String): Boolean {
+        val combined = "$frequency $timing".lowercase()
+        return combined.contains("sos") || combined.contains("prn") ||
+                combined.contains("as needed") || combined.contains("when needed") ||
+                combined.contains("when required") || combined.contains("if required") ||
+                combined.contains("if needed") || combined.contains("as required")
+    }
+
     fun generateSchedule(frequency: String, timing: String): ScheduleGenerationResult {
+        if (isAsNeeded(frequency, timing)) {
+            return ScheduleGenerationResult(
+                slots = emptyList(),
+                reviewRecommended = false,
+                note = "As-needed (PRN / SOS) medication without fixed scheduled alarms."
+            )
+        }
+
         val freqClean = frequency.trim().lowercase()
         val timingClean = timing.trim().lowercase()
 
         val withFood = determineWithFood(timingClean)
 
-        // 1. Direct timing specific combinations (e.g. "morning and night", "after breakfast and dinner")
         val combinedSlots = parseExplicitTimings(freqClean, timingClean, withFood)
         if (combinedSlots.isNotEmpty()) {
             return ScheduleGenerationResult(combinedSlots.distinctBy { it.time }.sortedBy { it.time }, false)

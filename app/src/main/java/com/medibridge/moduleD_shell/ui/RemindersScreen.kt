@@ -33,6 +33,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.medibridge.core.db.AppDatabase
 import com.medibridge.core.db.NotificationEntity
+import com.medibridge.core.model.MedicationObject
+import com.medibridge.core.model.fromEntity
 import com.medibridge.core.theme.*
 import com.medibridge.moduleC_schedule.viewmodel.ScheduleViewModel
 import com.medibridge.moduleD_shell.ui.components.*
@@ -41,6 +43,7 @@ enum class ReminderFilter(val label: String) {
     ALL("All"),
     PENDING("Pending"),
     TAKEN("Taken"),
+    SKIPPED("Skipped"),
     MISSED("Missed")
 }
 
@@ -58,6 +61,13 @@ fun RemindersScreen(
     val liveReminders by viewModel.reminders.collectAsState()
     val displayReminders = liveReminders
 
+    val allDbMeds by db.medicationDao().getAllMedications().collectAsState(initial = emptyList())
+    val prnMeds: List<MedicationObject> = remember(allDbMeds) {
+        allDbMeds.map { it.fromEntity() }.filter {
+            com.medibridge.moduleC_schedule.engine.ScheduleEngine.isAsNeeded(it.frequency, it.timing)
+        }
+    }
+
     val allAlerts by db.notificationDao().getAllNotifications().collectAsState(initial = emptyList())
     val alertsByMed: Map<String, NotificationEntity> = remember(allAlerts) {
         allAlerts
@@ -68,7 +78,8 @@ fun RemindersScreen(
 
     val takenCount = displayReminders.count { it.status == ReminderStatus.TAKEN }
     val missedCount = displayReminders.count { it.status == ReminderStatus.MISSED }
-    val pendingCount = displayReminders.count { it.status == ReminderStatus.PENDING }
+    val skippedCount = displayReminders.count { it.status == ReminderStatus.SKIPPED }
+    val pendingCount = displayReminders.count { it.status == ReminderStatus.PENDING || it.status == ReminderStatus.SNOOZED }
     val totalDoses = displayReminders.size
     val adherencePercent = if (takenCount + missedCount > 0) {
         (takenCount * 100) / (takenCount + missedCount)
@@ -83,8 +94,9 @@ fun RemindersScreen(
     val filteredReminders = remember(displayReminders, selectedFilter) {
         when (selectedFilter) {
             ReminderFilter.ALL -> displayReminders
-            ReminderFilter.PENDING -> displayReminders.filter { it.status == ReminderStatus.PENDING }
+            ReminderFilter.PENDING -> displayReminders.filter { it.status == ReminderStatus.PENDING || it.status == ReminderStatus.SNOOZED }
             ReminderFilter.TAKEN -> displayReminders.filter { it.status == ReminderStatus.TAKEN }
+            ReminderFilter.SKIPPED -> displayReminders.filter { it.status == ReminderStatus.SKIPPED }
             ReminderFilter.MISSED -> displayReminders.filter { it.status == ReminderStatus.MISSED }
         }
     }
@@ -325,6 +337,10 @@ fun RemindersScreen(
                             onSnooze = { delayMin ->
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 viewModel.snooze(item.id, delayMin)
+                            },
+                            onSkip = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                viewModel.markSkipped(item.id, item.name, item.dose)
                             }
                         )
                     }
@@ -348,6 +364,10 @@ fun RemindersScreen(
                             onSnooze = { delayMin ->
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 viewModel.snooze(item.id, delayMin)
+                            },
+                            onSkip = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                viewModel.markSkipped(item.id, item.name, item.dose)
                             }
                         )
                     }
@@ -371,8 +391,104 @@ fun RemindersScreen(
                             onSnooze = { delayMin ->
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 viewModel.snooze(item.id, delayMin)
+                            },
+                            onSkip = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                viewModel.markSkipped(item.id, item.name, item.dose)
                             }
                         )
+                    }
+                }
+            }
+
+            if (prnMeds.isNotEmpty()) {
+                item {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    SectionHeader(
+                        title = "As-Needed (PRN / SOS) Medicines",
+                        badgeCount = prnMeds.size
+                    )
+                    Text(
+                        text = "These medications do not trigger fixed daily alarms. Take and log only when required.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                }
+
+                items(prnMeds, key = { "prn_${it.id}" }) { prnMed ->
+                    var doseLoggedRecently by remember { mutableStateOf(false) }
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.MedicalServices,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+
+                            Spacer(Modifier.width(12.dp))
+
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = prnMed.name,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    text = "${prnMed.dose} · ${prnMed.timing.ifBlank { "When required" }}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            Spacer(Modifier.width(8.dp))
+
+                            Button(
+                                onClick = {
+                                    doseLoggedRecently = true
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    viewModel.markTaken("${prnMed.id}_sos_${java.time.LocalDate.now()}", prnMed.name, prnMed.dose)
+                                    android.widget.Toast.makeText(context, "Dose logged for ${prnMed.name}", android.widget.Toast.LENGTH_SHORT).show()
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (doseLoggedRecently) StatusVerified else MaterialTheme.colorScheme.primary
+                                ),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (doseLoggedRecently) Icons.Default.Check else Icons.Default.Add,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    text = if (doseLoggedRecently) "Logged" else "Log Dose",
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -389,16 +505,20 @@ private fun ReminderCardItem(
     reminder: ReminderItem,
     alert: NotificationEntity?,
     onMarkTaken: () -> Unit,
-    onSnooze: (Int) -> Unit
+    onSnooze: (Int) -> Unit,
+    onSkip: () -> Unit = {}
 ) {
-    val isPending = reminder.status == ReminderStatus.PENDING
+    val isPending = reminder.status == ReminderStatus.PENDING || reminder.status == ReminderStatus.SNOOZED
     val isTaken = reminder.status == ReminderStatus.TAKEN
     val isMissed = reminder.status == ReminderStatus.MISSED
+    val isSkipped = reminder.status == ReminderStatus.SKIPPED
 
     val borderColor by animateColorAsState(
         targetValue = when {
             isTaken -> StatusVerified.copy(alpha = 0.35f)
             isMissed -> StatusConflict.copy(alpha = 0.4f)
+            isSkipped -> MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)
+            reminder.status == ReminderStatus.SNOOZED -> StatusReview.copy(alpha = 0.4f)
             else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
         },
         animationSpec = tween(400),
@@ -408,13 +528,13 @@ private fun ReminderCardItem(
     val containerColor by animateColorAsState(
         targetValue = when {
             isTaken -> MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
+            isSkipped -> MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)
             else -> MaterialTheme.colorScheme.surface
         },
         animationSpec = tween(400),
         label = "reminder_bg_anim"
     )
 
-    // Breathing pulse for pending dose indicator
     val infiniteTransition = rememberInfiniteTransition(label = "pulse_trans")
     val pulseAlpha by infiniteTransition.animateFloat(
         initialValue = 0.35f,
@@ -451,13 +571,11 @@ private fun ReminderCardItem(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Left Status Indicator Icon with Animation
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier.size(44.dp)
                 ) {
                     if (isPending) {
-                        // Pulsing outer halo for active upcoming dose
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -476,6 +594,8 @@ private fun ReminderCardItem(
                         color = when {
                             isTaken -> StatusVerifiedBg
                             isMissed -> StatusConflictBg
+                            isSkipped -> MaterialTheme.colorScheme.surfaceVariant
+                            reminder.status == ReminderStatus.SNOOZED -> StatusReviewBg
                             else -> MaterialTheme.colorScheme.primaryContainer
                         },
                         modifier = Modifier.size(38.dp)
@@ -485,12 +605,16 @@ private fun ReminderCardItem(
                                 imageVector = when {
                                     isTaken -> Icons.Default.CheckCircle
                                     isMissed -> Icons.Default.Warning
+                                    isSkipped -> Icons.Default.RemoveCircleOutline
+                                    reminder.status == ReminderStatus.SNOOZED -> Icons.Default.Snooze
                                     else -> Icons.Default.Schedule
                                 },
                                 contentDescription = null,
                                 tint = when {
                                     isTaken -> StatusVerified
                                     isMissed -> StatusConflict
+                                    isSkipped -> MaterialTheme.colorScheme.outline
+                                    reminder.status == ReminderStatus.SNOOZED -> StatusReview
                                     else -> MaterialTheme.colorScheme.primary
                                 },
                                 modifier = Modifier.size(20.dp)
@@ -501,7 +625,6 @@ private fun ReminderCardItem(
 
                 Spacer(modifier = Modifier.width(14.dp))
 
-                // Center Medicine Information
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = reminder.name,
@@ -517,7 +640,6 @@ private fun ReminderCardItem(
                     )
                 }
 
-                // Right Status Badge Pill
                 when (reminder.status) {
                     ReminderStatus.TAKEN -> {
                         Surface(
@@ -569,6 +691,56 @@ private fun ReminderCardItem(
                             }
                         }
                     }
+                    ReminderStatus.SKIPPED -> {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceVariant
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.RemoveCircleOutline,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.outline,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Skipped",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.outline
+                                )
+                            }
+                        }
+                    }
+                    ReminderStatus.SNOOZED -> {
+                        Surface(
+                            shape = CircleShape,
+                            color = StatusReviewBg
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Snooze,
+                                    contentDescription = null,
+                                    tint = StatusReview,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Snoozed",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = StatusReview
+                                )
+                            }
+                        }
+                    }
                     ReminderStatus.PENDING -> {
                         Surface(
                             shape = CircleShape,
@@ -583,7 +755,7 @@ private fun ReminderCardItem(
                                         .size(6.dp)
                                         .clip(CircleShape)
                                         .background(MaterialTheme.colorScheme.primary)
-                                )
+                                    )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
                                     text = "Pending",
@@ -597,7 +769,6 @@ private fun ReminderCardItem(
                 }
             }
 
-            // Optional Notification Alert banner
             if (alert != null) {
                 Spacer(modifier = Modifier.height(12.dp))
                 Surface(
@@ -625,7 +796,6 @@ private fun ReminderCardItem(
                 }
             }
 
-            // Action row when Pending
             if (isPending) {
                 Spacer(modifier = Modifier.height(14.dp))
                 HorizontalDivider(
@@ -636,15 +806,15 @@ private fun ReminderCardItem(
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     PrimaryButton(
-                        text = "Mark Taken",
+                        text = "Taken",
                         icon = Icons.Default.Check,
                         onClick = onMarkTaken,
                         size = ButtonSize.Small,
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1.2f)
                     )
 
                     SplitButton(
@@ -653,9 +823,17 @@ private fun ReminderCardItem(
                         onMainClick = { onSnooze(15) },
                         onOptionSelected = onSnooze
                     )
+
+                    OutlinedButton(
+                        onClick = onSkip,
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                        modifier = Modifier.height(40.dp)
+                    ) {
+                        Text("Skip", style = MaterialTheme.typography.labelSmall)
+                    }
                 }
             } else if (isTaken) {
-                // Completed state confirmation strip
                 Spacer(modifier = Modifier.height(10.dp))
                 Row(
                     modifier = Modifier
@@ -674,6 +852,29 @@ private fun ReminderCardItem(
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = "Dose completed and logged on schedule",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else if (isSkipped) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.RemoveCircleOutline,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.outline,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Dose skipped for today",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -797,6 +998,6 @@ data class ReminderItem(
     val name: String get() = medicineName
 }
 
-enum class ReminderStatus { PENDING, TAKEN, MISSED }
+enum class ReminderStatus { PENDING, TAKEN, SNOOZED, SKIPPED, MISSED }
 
 val dummyReminders: List<ReminderItem> = emptyList()

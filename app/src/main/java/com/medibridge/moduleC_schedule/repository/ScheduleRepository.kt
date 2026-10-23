@@ -366,6 +366,29 @@ class ScheduleRepository(
         Log.i(TAG, "Snoozed: $medName at $slotTime on $date for $delayMinutes min")
     }
 
+    suspend fun markSkipped(
+        medicationId: String,
+        slotTime: String,
+        date: String = todayIso(),
+        medicineName: String? = null,
+        dose: String? = null,
+        reason: String? = null
+    ) = withContext(Dispatchers.IO) {
+        val entity = medicationDao.getMedicationById(medicationId)
+        if (entity != null) {
+            val med = entity.fromEntity()
+            val updatedAdherence = updateAdherenceList(
+                currentList = med.adherence,
+                date = date,
+                slotTime = slotTime,
+                newStatus = "skipped"
+            )
+            val updatedMed = med.copy(adherence = updatedAdherence)
+            medicationDao.upsertMedication(updatedMed.toEntity())
+        }
+        reminderManager?.cancelReminder(medicationId, slotTime, date)
+    }
+
     /**
      * Automatic missed dose detection.
      *
@@ -502,7 +525,8 @@ class ScheduleRepository(
             return when (record.status.lowercase()) {
                 "taken" -> ReminderStatus.TAKEN
                 "missed" -> ReminderStatus.MISSED
-                "snoozed" -> ReminderStatus.PENDING
+                "skipped" -> ReminderStatus.SKIPPED
+                "snoozed" -> ReminderStatus.SNOOZED
                 else -> ReminderStatus.PENDING
             }
         }

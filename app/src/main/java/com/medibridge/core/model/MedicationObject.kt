@@ -25,12 +25,14 @@ import com.google.gson.reflect.TypeToken
  * Populated by Module B (Safety Cross-Verification).
  */
 data class MedicationConflict(
-    /** ID of the conflicting medication (references another MedicationObject.id) */
     val withMedId: String,
-    /** Type of conflict: e.g. "interaction", "duplicate", "contraindication" */
     val type: String,
-    /** Human-readable detail for the patient/caregiver */
-    val detail: String
+    val detail: String,
+    val finding: String = detail,
+    val explanation: String = detail,
+    val severity: String = "MODERATE",
+    val source: String = "MediBridge Clinical Rules v2",
+    val nextStep: String = "Consult your prescribing doctor before altering your medication."
 )
 
 /**

@@ -75,67 +75,88 @@ object SafetyEngine {
                         "Medication '${newMedication.name}' could not be verified against the configured safety knowledge base."
                     } else {
                         "Medication '${newMedication.name}' flagged for clinical verification."
-                    }
+                    },
+                    finding = "Formula requires verification (${newMedication.name})",
+                    explanation = if (!isRecognized) {
+                        "Medication '${newMedication.name}' could not be matched with high certainty in the local safety knowledge base."
+                    } else {
+                        "Medication '${newMedication.name}' flagged for clinical verification."
+                    },
+                    severity = "CAUTION",
+                    source = "MediBridge Prescription Safety Protocol",
+                    nextStep = "Check prescription photo to verify medicine name and strength spelling."
                 )
             )
         }
 
         val normNew = MedicationNormalizer.normalize(newMedication.name)
         val baseNew = MedicationNormalizer.extractBaseName(newMedication.name)
+        val canonNew = MedicationNormalizer.canonicalGeneric(newMedication.name)
         val newTherapeuticClass = SafetyRules.getTherapeuticClass(newMedication.name)
 
-        // 2. Compare against medication history
         for (existing in history) {
-            // Skip comparing with identical record ID if already in history
             if (existing.id == newMedication.id) continue
 
             val normExisting = MedicationNormalizer.normalize(existing.name)
             val baseExisting = MedicationNormalizer.extractBaseName(existing.name)
+            val canonExisting = MedicationNormalizer.canonicalGeneric(existing.name)
             var hasDuplicateForThisMed = false
 
-            // A. Duplicate detection
-            if (normNew == normExisting || (baseNew.isNotEmpty() && baseNew == baseExisting)) {
+            if (normNew == normExisting || (baseNew.isNotEmpty() && baseNew == baseExisting) || (canonNew.isNotEmpty() && canonNew == canonExisting)) {
+                val detailText = "Duplicate medication detected. Patient is already prescribed ${existing.name} (${existing.strength})."
                 conflicts.add(
                     MedicationConflict(
                         withMedId = existing.id,
                         type = CONFLICT_TYPE_DUPLICATE,
-                        detail = "Duplicate medication detected. Patient is already prescribed ${existing.name} (${existing.strength})."
+                        detail = detailText,
+                        finding = "Duplicate therapy: ${newMedication.name} matches active ${existing.name} ($canonNew)",
+                        explanation = "Patient is currently prescribed ${existing.name} (${existing.strength}). Co-prescribing another medication containing $canonNew leads to accidental double dosing.",
+                        severity = "HIGH",
+                        source = "WHO Patient Safety Curriculum - Dual Therapy Prevention",
+                        nextStep = "Ask your doctor if ${newMedication.name} replaces ${existing.name} or if one should be discontinued."
                     )
                 )
                 hasDuplicateForThisMed = true
             }
 
-            // B. Therapeutic overlap detection (only if not already an exact duplicate)
             if (!hasDuplicateForThisMed && newTherapeuticClass != null) {
                 val existingClass = SafetyRules.getTherapeuticClass(existing.name)
                 if (existingClass != null && existingClass.equals(newTherapeuticClass, ignoreCase = true)) {
+                    val detailText = "Potential therapeutic overlap detected: Both ${newMedication.name} and ${existing.name} belong to '$newTherapeuticClass'."
                     conflicts.add(
                         MedicationConflict(
                             withMedId = existing.id,
                             type = CONFLICT_TYPE_OVERLAP,
-                            detail = "Potential therapeutic overlap detected: Both ${newMedication.name} and ${existing.name} belong to '$newTherapeuticClass'."
+                            detail = detailText,
+                            finding = "Therapeutic class overlap ($newTherapeuticClass)",
+                            explanation = "Both ${newMedication.name} and ${existing.name} belong to '$newTherapeuticClass'. Co-administration may increase cumulative side effects without added therapeutic efficacy.",
+                            severity = "MODERATE",
+                            source = "Clinical Pharmacology Class Overlap Guidance",
+                            nextStep = "Discuss with doctor to ensure simultaneous usage in this drug class was intentional."
                         )
                     )
                 }
             }
 
-            // C. Interaction detection (order-independent rule lookup)
             val interaction = SafetyRules.findInteraction(newMedication.name, existing.name)
             if (interaction != null) {
                 conflicts.add(
                     MedicationConflict(
                         withMedId = existing.id,
                         type = CONFLICT_TYPE_INTERACTION,
-                        detail = "${interaction.detail} (Co-administered with ${existing.name})"
+                        detail = "${interaction.detail} (Co-administered with ${existing.name})",
+                        finding = "Drug-drug interaction between ${newMedication.name} and ${existing.name}",
+                        explanation = interaction.explanation,
+                        severity = interaction.severity,
+                        source = interaction.source,
+                        nextStep = interaction.nextStep
                     )
                 )
             }
         }
 
-        // 3. Determine review recommendation
         val reviewRecommended = conflicts.isNotEmpty() || !crossVerified
 
-        // 4. Derive primary verdict and summaries
         val verdict: SafetyVerdict
         val headline: String
         val summary: String
@@ -171,8 +192,8 @@ object SafetyEngine {
             }
             else -> {
                 verdict = SafetyVerdict.SAFE
-                headline = "No Known Conflict Detected"
-                summary = "Cross-verification complete against configured rules and active medication history."
+                headline = "No issues detected by the checks available in this app"
+                summary = "Checked against drug-drug interactions, duplicate therapies, food/meal timing, and active regimen history."
             }
         }
 

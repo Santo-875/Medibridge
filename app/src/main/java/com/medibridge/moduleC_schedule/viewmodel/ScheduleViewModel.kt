@@ -170,6 +170,20 @@ class ScheduleViewModel(
         }
     }
 
+    fun markSkipped(reminderId: String, medicineName: String? = null, dose: String? = null, reason: String? = null) {
+        viewModelScope.launch {
+            try {
+                val parts = reminderId.split("_")
+                val medicationId = parts[0]
+                val slotTime = if (parts.size >= 2) parts[1] else "08:00"
+                val date = if (parts.size >= 3) parts.subList(2, parts.size).joinToString("_") else ScheduleRepository.todayIso()
+                repository.markSkipped(medicationId, slotTime, date, medicineName, dose, reason)
+            } catch (e: Exception) {
+                android.util.Log.e("ScheduleViewModel", "Failed to mark skipped for reminderId: $reminderId", e)
+            }
+        }
+    }
+
     /**
      * Generates and stores a patient summary + side effects using Gemini AI.
      */

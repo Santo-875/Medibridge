@@ -234,14 +234,14 @@ fun SafetyScreen(
                             Spacer(Modifier.width(14.dp))
                             Column {
                                 Text(
-                                    text = "No Known Conflict Detected",
+                                    text = "No issues detected by the checks available in this app",
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = StatusVerified
                                 )
                                 Spacer(Modifier.height(2.dp))
                                 Text(
-                                    text = "Cross-verification complete against configured rules. No duplicate therapies or drug-drug interactions detected.",
+                                    text = "Checked against known drug-drug interactions, duplicate therapeutic agents, food/meal relation, and active patient profile history.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -818,11 +818,43 @@ private fun ConflictCard(
             Spacer(Modifier.height(8.dp))
 
             Text(
-                text = conflict.detail,
+                text = conflict.finding.ifBlank { conflict.detail },
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+
+            Spacer(Modifier.height(4.dp))
+
+            Text(
+                text = conflict.explanation.ifBlank { conflict.detail },
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 lineHeight = 18.sp
             )
+
+            Spacer(Modifier.height(10.dp))
+
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(10.dp)) {
+                    Text(
+                        text = "Next Step: ${conflict.nextStep}",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = "Source: ${conflict.source}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                }
+            }
 
             Spacer(Modifier.height(12.dp))
 
