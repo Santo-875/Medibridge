@@ -223,7 +223,7 @@ async def upload_prescription(
     if blur_score < 25.0:
         raise HTTPException(status_code=422, detail="Image too blurry. Hold the camera steady and use better lighting.")
 
-    max_dim = 1800
+    max_dim = 1400
     if max(height, width) > max_dim:
         scale = float(max_dim) / max(height, width)
         image = cv2.resize(image, (int(width * scale), int(height * scale)), interpolation=cv2.INTER_AREA)
@@ -250,13 +250,19 @@ async def upload_prescription(
     blocks = reconstruct_medicine_blocks(med_lines)
     blocks = merge_medicine_blocks(blocks)
 
+    from concurrent.futures import ThreadPoolExecutor
+
     def _process_single_block(b):
         p = parse_medicine_block(b)
         p["medicine"] = normalize_medicine_text(p["medicine"])
         p["validation"] = validate_medicine(p["medicine"])
         return p
 
-    validated = await asyncio.to_thread(lambda: [_process_single_block(b) for b in blocks])
+    def _process_all_blocks(blks):
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            return list(ex.map(_process_single_block, blks))
+
+    validated = await asyncio.to_thread(_process_all_blocks, blocks)
 
     record = None
     if os.environ.get("GROQ_API_KEY"):

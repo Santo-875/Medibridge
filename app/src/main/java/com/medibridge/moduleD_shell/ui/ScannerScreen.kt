@@ -263,10 +263,16 @@ fun ScannerScreen(
                         uiState = ScannerUiState.Analyzing(status)
                     }
                     uiState = ScannerUiState.Analyzing("Extracting prescription items with AI...")
-                    val scannedPkg = withTimeout(120_000L) {
+                    val scannedPkg = withTimeout(240_000L) {
                         processDocumentAndPipeline(context, fileToProcess)
                     }
                     uiState = ScannerUiState.Review(scannedPkg)
+                } catch (e: TimeoutCancellationException) {
+                    uiState = ScannerUiState.Error(
+                        title = "Prescription Scanning Timed Out",
+                        message = "The prescription analysis took longer than 4 minutes. Please ensure the backend server is running and try again.",
+                        technicalDetails = "TimeoutCancellationException: ${e.message}"
+                    )
                 } catch (_: CancellationException) {
                     uiState = ScannerUiState.Camera
                 } catch (e: Throwable) {
@@ -425,10 +431,16 @@ fun ScannerScreen(
                                                                     uiState = ScannerUiState.Analyzing(status)
                                                                 }
                                                                 uiState = ScannerUiState.Analyzing("Extracting medicine details with OCR...")
-                                                                val scannedPkg = withTimeout(120_000L) {
+                                                                val scannedPkg = withTimeout(240_000L) {
                                                                     processDocumentAndPipeline(context, photoFile)
                                                                 }
                                                                 uiState = ScannerUiState.Review(scannedPkg)
+                                                            } catch (e: TimeoutCancellationException) {
+                                                                uiState = ScannerUiState.Error(
+                                                                    title = "Prescription Scanning Timed Out",
+                                                                    message = "The prescription analysis took longer than 4 minutes. Please ensure the backend server is running and try again.",
+                                                                    technicalDetails = "TimeoutCancellationException: ${e.message}"
+                                                                )
                                                             } catch (_: CancellationException) {
                                                                 uiState = ScannerUiState.Camera
                                                             } catch (e: Throwable) {
