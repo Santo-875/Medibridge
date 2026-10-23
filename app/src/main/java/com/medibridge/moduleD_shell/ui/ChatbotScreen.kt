@@ -633,11 +633,11 @@ private fun TypingIndicator(modifier: Modifier = Modifier) {
 }
 
 private val quickQuestions = listOf(
-    "What medications are currently active?",
-    "When should I take my next dose?",
-    "Are there any drug interactions?",
-    "What are common side effects?",
-    "Show my complete daily schedule"
+    "How can I relieve a sudden headache?",
+    "What should I do if I miss a dose?",
+    "Can I take pain relievers with food or milk?",
+    "What are simple remedies for cold and cough?",
+    "Tips to safely manage mild fever at home"
 )
 
 @Composable
