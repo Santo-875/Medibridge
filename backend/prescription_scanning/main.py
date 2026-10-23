@@ -67,7 +67,7 @@ try:
         lang="en",
         use_doc_orientation_classify=False,
         use_doc_unwarping=False,
-        use_textline_orientation=False,
+        use_textline_orientation=True,
         enable_mkldnn=False
     )
 except Exception as e:
@@ -478,7 +478,7 @@ async def upload_prescription(file: UploadFile = File(...)):
     if blur_score < 25.0:
         raise HTTPException(status_code=422, detail="Image too blurry. Hold the camera steady and use better lighting.")
 
-    max_dim = 800
+    max_dim = 1800
     if max(height, width) > max_dim:
         scale = float(max_dim) / max(height, width)
         image = cv2.resize(image, (int(width * scale), int(height * scale)), interpolation=cv2.INTER_AREA)
@@ -597,8 +597,8 @@ Return ONLY valid JSON matching this schema:
 }}
 
 CRITICAL EXTRACTION RULES:
-- "remarks": Extract ONLY the clinical diagnosis or doctor remarks. Do NOT append "Delivery" or "Delivery Type" to remarks.
-- "delivery_type": Extract the method of delivery (e.g., "Pickup From Polyclinic").
+- "remarks": Extract ONLY real clinical diagnosis or specific doctor instructions present in the text. If none is explicitly stated, return null. Never copy example text.
+- "delivery_type": Extract the method of delivery if present, else null.
 
 RECEIPT TEXT:
 {raw_text}

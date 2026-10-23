@@ -66,7 +66,8 @@ fun MainShell(
         Screen.Recording.route,
         Screen.AddEditMedication.route,
         Screen.SafetyDashboard.route,
-        Screen.ConsultationRecordings.route
+        Screen.ConsultationRecordings.route,
+        Screen.PrescriptionArchive.route
     )
     val showBottomNav = currentDest?.route !in hideBottomNavRoutes
 

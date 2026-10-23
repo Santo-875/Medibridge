@@ -53,6 +53,7 @@ fun HomeScreen(
     onRecordingsListClick: () -> Unit = {},
     onMedicinesClick: () -> Unit = {},
     onSettingsClick: () -> Unit = {},
+    onPrescriptionArchiveClick: () -> Unit = {},
     onOpenDrawer: () -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -203,6 +204,17 @@ fun HomeScreen(
                     onClick = {
                         coroutineScope.launch { drawerState.close() }
                         onRecordingsListClick()
+                    },
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                )
+
+                NavigationDrawerItem(
+                    label = { Text("Prescription Archive", fontWeight = FontWeight.Medium) },
+                    icon = { Icon(Icons.Default.FolderShared, contentDescription = null) },
+                    selected = false,
+                    onClick = {
+                        coroutineScope.launch { drawerState.close() }
+                        onPrescriptionArchiveClick()
                     },
                     modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
                 )

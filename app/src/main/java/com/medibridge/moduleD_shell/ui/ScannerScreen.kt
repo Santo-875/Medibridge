@@ -72,10 +72,30 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
 
+import android.graphics.BitmapFactory
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.window.Dialog
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
+import com.google.gson.Gson
+import com.medibridge.core.db.PrescriptionRecordEntity
+import com.medibridge.core.pipeline.ReconciliationStatus
+
+data class ScannedPrescriptionPackage(
+    val items: List<MedicationIngestionPipeline.PipelineResultItem>,
+    val imageFile: File?,
+    val doctorName: String = "",
+    val clinicName: String = "",
+    val prescriptionDate: String = "",
+    val remarks: String = "",
+    val deliveryType: String = "",
+    val rawOcrText: String = ""
+)
+
 sealed class ScannerUiState {
     object Camera : ScannerUiState()
     data class Analyzing(val status: String = "Analyzing prescription or bill...") : ScannerUiState()
-    data class Review(val items: List<MedicationIngestionPipeline.PipelineResultItem>) : ScannerUiState()
+    data class Review(val pkg: ScannedPrescriptionPackage) : ScannerUiState()
     data class Error(
         val title: String = "Processing Failed",
         val message: String,
@@ -243,10 +263,10 @@ fun ScannerScreen(
                         uiState = ScannerUiState.Analyzing(status)
                     }
                     uiState = ScannerUiState.Analyzing("Extracting prescription items with AI...")
-                    val pipelineResults = withTimeout(120_000L) {
+                    val scannedPkg = withTimeout(120_000L) {
                         processDocumentAndPipeline(context, fileToProcess)
                     }
-                    uiState = ScannerUiState.Review(pipelineResults)
+                    uiState = ScannerUiState.Review(scannedPkg)
                 } catch (_: CancellationException) {
                     uiState = ScannerUiState.Camera
                 } catch (e: Throwable) {
@@ -405,10 +425,10 @@ fun ScannerScreen(
                                                                     uiState = ScannerUiState.Analyzing(status)
                                                                 }
                                                                 uiState = ScannerUiState.Analyzing("Extracting medicine details with OCR...")
-                                                                val pipelineResults = withTimeout(120_000L) {
+                                                                val scannedPkg = withTimeout(120_000L) {
                                                                     processDocumentAndPipeline(context, photoFile)
                                                                 }
-                                                                uiState = ScannerUiState.Review(pipelineResults)
+                                                                uiState = ScannerUiState.Review(scannedPkg)
                                                             } catch (_: CancellationException) {
                                                                 uiState = ScannerUiState.Camera
                                                             } catch (e: Throwable) {
@@ -508,11 +528,23 @@ fun ScannerScreen(
 
                 is ScannerUiState.Review -> {
                     ReviewScreenContent(
-                        items = state.items,
-                        onSave = { finalizedItems ->
+                        pkg = state.pkg,
+                        onSave = { finalizedPkg ->
                             scope.launch {
-                                MedicationIngestionPipeline.commitPipeline(context, finalizedItems)
-                                Toast.makeText(context, "${finalizedItems.size} medicine(s) saved to regimen!", Toast.LENGTH_SHORT).show()
+                                val prescEntity = PrescriptionRecordEntity(
+                                    doctorName = finalizedPkg.doctorName,
+                                    clinicName = finalizedPkg.clinicName,
+                                    prescriptionDate = finalizedPkg.prescriptionDate.ifBlank {
+                                        java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
+                                    },
+                                    imagePath = finalizedPkg.imageFile?.absolutePath ?: "",
+                                    rawOcrText = finalizedPkg.rawOcrText,
+                                    remarks = finalizedPkg.remarks,
+                                    deliveryType = finalizedPkg.deliveryType,
+                                    medicationsJson = Gson().toJson(finalizedPkg.items.map { it.medication })
+                                )
+                                MedicationIngestionPipeline.commitPipeline(context, finalizedPkg.items, prescEntity)
+                                Toast.makeText(context, "${finalizedPkg.items.size} medicine(s) verified & saved!", Toast.LENGTH_SHORT).show()
                                 onBack()
                             }
                         },
@@ -700,11 +732,12 @@ private fun ViewfinderOverlay(modifier: Modifier = Modifier) {
 
 @Composable
 private fun ReviewScreenContent(
-    items: List<MedicationIngestionPipeline.PipelineResultItem>,
-    onSave: (List<MedicationIngestionPipeline.PipelineResultItem>) -> Unit,
+    pkg: ScannedPrescriptionPackage,
+    onSave: (ScannedPrescriptionPackage) -> Unit,
     onRetake: () -> Unit
 ) {
-    var reviewItems by remember(items) { mutableStateOf(items) }
+    var reviewPkg by remember(pkg) { mutableStateOf(pkg) }
+    var showFullImageDialog by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -712,8 +745,8 @@ private fun ReviewScreenContent(
             .padding(horizontal = 16.dp)
     ) {
         SectionHeader(
-            title = "Extracted Medications",
-            badgeCount = reviewItems.size,
+            title = "Verify Prescription",
+            badgeCount = reviewPkg.items.size,
             actionLabel = "Retake",
             onActionClick = onRetake
         )
@@ -723,15 +756,116 @@ private fun ReviewScreenContent(
             verticalArrangement = Arrangement.spacedBy(14.dp),
             contentPadding = PaddingValues(vertical = 8.dp)
         ) {
-            itemsIndexed(reviewItems) { index, item ->
+            if (reviewPkg.imageFile?.exists() == true) {
+                item {
+                    val bitmap = remember(reviewPkg.imageFile) {
+                        BitmapFactory.decodeFile(reviewPkg.imageFile!!.absolutePath)
+                    }
+                    if (bitmap != null) {
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showFullImageDialog = true },
+                            shape = RoundedCornerShape(14.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Image(
+                                    bitmap = bitmap.asImageBitmap(),
+                                    contentDescription = "Prescription thumbnail",
+                                    modifier = Modifier
+                                        .size(64.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Original Prescription Photo",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = "Tap to view & zoom document",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                                Icon(
+                                    imageVector = Icons.Default.ZoomIn,
+                                    contentDescription = "Zoom",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            item {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
+                ) {
+                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "Prescription Details",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                value = reviewPkg.doctorName,
+                                onValueChange = { reviewPkg = reviewPkg.copy(doctorName = it) },
+                                label = { Text("Prescribed By") },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                                shape = RoundedCornerShape(10.dp)
+                            )
+                            OutlinedTextField(
+                                value = reviewPkg.clinicName,
+                                onValueChange = { reviewPkg = reviewPkg.copy(clinicName = it) },
+                                label = { Text("Clinic / Hospital") },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                                shape = RoundedCornerShape(10.dp)
+                            )
+                        }
+                        if (reviewPkg.remarks.isNotBlank()) {
+                            OutlinedTextField(
+                                value = reviewPkg.remarks,
+                                onValueChange = { reviewPkg = reviewPkg.copy(remarks = it) },
+                                label = { Text("Clinical Notes / Remarks") },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                shape = RoundedCornerShape(10.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            itemsIndexed(reviewPkg.items) { index, item ->
                 val med = item.medication
-                val eval = item.evaluation
+                val recon = item.reconciliation
+                val isUncertain = med.confidence < 0.80f || recon?.requiresVerification == true
 
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
                     color = MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
+                    border = BorderStroke(
+                        if (isUncertain) 1.5.dp else 1.dp,
+                        if (isUncertain) StatusReview else MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)
+                    )
                 ) {
                     Column(
                         modifier = Modifier
@@ -750,16 +884,54 @@ private fun ReviewScreenContent(
                                 color = MaterialTheme.colorScheme.primary
                             )
 
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                                 ConfidenceBadge(confidence = med.confidence)
 
-                                val status = when (eval.verdict) {
-                                    SafetyVerdict.SAFE -> StatusType.Verified
-                                    SafetyVerdict.INTERACTION, SafetyVerdict.DUPLICATE -> StatusType.Conflict
-                                    SafetyVerdict.OVERLAP, SafetyVerdict.UNVERIFIED -> StatusType.Review
-                                    else -> StatusType.Review
+                                recon?.let { r ->
+                                    val chipLabel = when (r.status) {
+                                        ReconciliationStatus.NEW -> "New to Regimen"
+                                        ReconciliationStatus.DOSE_CHANGED -> "Dose Changed"
+                                        ReconciliationStatus.DUPLICATE -> "Duplicate"
+                                        ReconciliationStatus.CLASS_OVERLAP -> "Class Overlap"
+                                        ReconciliationStatus.UNCHANGED -> "Unchanged"
+                                    }
+                                    val chipStatus = when (r.status) {
+                                        ReconciliationStatus.NEW -> StatusType.Verified
+                                        ReconciliationStatus.DOSE_CHANGED -> StatusType.Conflict
+                                        ReconciliationStatus.DUPLICATE -> StatusType.Conflict
+                                        ReconciliationStatus.CLASS_OVERLAP -> StatusType.Review
+                                        ReconciliationStatus.UNCHANGED -> StatusType.Verified
+                                    }
+                                    StatusChip(status = chipStatus, customLabel = chipLabel)
                                 }
-                                StatusChip(status = status, customLabel = eval.verdict.name)
+                            }
+                        }
+
+                        if (isUncertain) {
+                            Spacer(Modifier.height(8.dp))
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = StatusReviewBg,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Warning,
+                                        contentDescription = null,
+                                        tint = StatusReview,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        text = recon?.changeSummary?.ifBlank { "Please verify details against the prescription photo." }
+                                            ?: "Please verify details against the prescription photo.",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
                             }
                         }
 
@@ -768,10 +940,10 @@ private fun ReviewScreenContent(
                         OutlinedTextField(
                             value = med.name,
                             onValueChange = { newName ->
-                                reviewItems = reviewItems.toMutableList().also {
-                                    val updated = med.copy(name = newName)
-                                    it[index] = it[index].copy(medication = updated)
-                                }
+                                val updatedItems = reviewPkg.items.toMutableList()
+                                val updatedMed = med.copy(name = newName)
+                                updatedItems[index] = updatedItems[index].copy(medication = updatedMed)
+                                reviewPkg = reviewPkg.copy(items = updatedItems)
                             },
                             label = { Text("Medicine Name") },
                             modifier = Modifier.fillMaxWidth(),
@@ -788,10 +960,10 @@ private fun ReviewScreenContent(
                             OutlinedTextField(
                                 value = med.strength,
                                 onValueChange = { newStrength ->
-                                    reviewItems = reviewItems.toMutableList().also {
-                                        val updated = med.copy(strength = newStrength)
-                                        it[index] = it[index].copy(medication = updated)
-                                    }
+                                    val updatedItems = reviewPkg.items.toMutableList()
+                                    val updatedMed = med.copy(strength = newStrength)
+                                    updatedItems[index] = updatedItems[index].copy(medication = updatedMed)
+                                    reviewPkg = reviewPkg.copy(items = updatedItems)
                                 },
                                 label = { Text("Strength") },
                                 modifier = Modifier.weight(1f),
@@ -802,12 +974,47 @@ private fun ReviewScreenContent(
                             OutlinedTextField(
                                 value = med.dose,
                                 onValueChange = { newDose ->
-                                    reviewItems = reviewItems.toMutableList().also {
-                                        val updated = med.copy(dose = newDose)
-                                        it[index] = it[index].copy(medication = updated)
-                                    }
+                                    val updatedItems = reviewPkg.items.toMutableList()
+                                    val updatedMed = med.copy(dose = newDose)
+                                    updatedItems[index] = updatedItems[index].copy(medication = updatedMed)
+                                    reviewPkg = reviewPkg.copy(items = updatedItems)
                                 },
                                 label = { Text("Dose") },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = med.frequency,
+                                onValueChange = { newFreq ->
+                                    val updatedItems = reviewPkg.items.toMutableList()
+                                    val updatedMed = med.copy(frequency = newFreq)
+                                    updatedItems[index] = updatedItems[index].copy(medication = updatedMed)
+                                    reviewPkg = reviewPkg.copy(items = updatedItems)
+                                },
+                                label = { Text("Frequency") },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                                shape = RoundedCornerShape(12.dp)
+                            )
+
+                            OutlinedTextField(
+                                value = med.duration,
+                                onValueChange = { newDuration ->
+                                    val updatedItems = reviewPkg.items.toMutableList()
+                                    val updatedMed = med.copy(duration = newDuration)
+                                    updatedItems[index] = updatedItems[index].copy(medication = updatedMed)
+                                    reviewPkg = reviewPkg.copy(items = updatedItems)
+                                },
+                                label = { Text("Duration") },
                                 modifier = Modifier.weight(1f),
                                 singleLine = true,
                                 shape = RoundedCornerShape(12.dp)
@@ -819,12 +1026,12 @@ private fun ReviewScreenContent(
                         OutlinedTextField(
                             value = med.timing,
                             onValueChange = { newTiming ->
-                                reviewItems = reviewItems.toMutableList().also {
-                                    val updated = med.copy(timing = newTiming)
-                                    it[index] = it[index].copy(medication = updated)
-                                }
+                                val updatedItems = reviewPkg.items.toMutableList()
+                                val updatedMed = med.copy(timing = newTiming)
+                                updatedItems[index] = updatedItems[index].copy(medication = updatedMed)
+                                reviewPkg = reviewPkg.copy(items = updatedItems)
                             },
-                            label = { Text("Instructions / Timing") },
+                            label = { Text("Instructions / Meal Relation") },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
                             shape = RoundedCornerShape(12.dp)
@@ -837,13 +1044,61 @@ private fun ReviewScreenContent(
         Spacer(modifier = Modifier.height(8.dp))
 
         PrimaryButton(
-            text = "Save to Regimen (${reviewItems.size})",
-            icon = Icons.Default.Check,
-            onClick = { onSave(reviewItems) },
+            text = "Verify & Save to Regimen (${reviewPkg.items.size})",
+            icon = Icons.Default.CheckCircle,
+            onClick = { onSave(reviewPkg) },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(bottom = 16.dp)
         )
+    }
+
+    if (showFullImageDialog && reviewPkg.imageFile?.exists() == true) {
+        Dialog(onDismissRequest = { showFullImageDialog = false }) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.80f)
+            ) {
+                Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Original Prescription Photo",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        IconButton(onClick = { showFullImageDialog = false }) {
+                            Icon(Icons.Default.Close, contentDescription = "Close")
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    val bitmap = remember(reviewPkg.imageFile) {
+                        BitmapFactory.decodeFile(reviewPkg.imageFile!!.absolutePath)
+                    }
+                    if (bitmap != null) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            Image(
+                                bitmap = bitmap.asImageBitmap(),
+                                contentDescription = "Original Prescription",
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -939,9 +1194,15 @@ private fun optimizeImageForUpload(context: Context, file: File): File {
 private suspend fun processDocumentAndPipeline(
     context: Context,
     file: File?
-): List<MedicationIngestionPipeline.PipelineResultItem> {
+): ScannedPrescriptionPackage {
     val candidateMeds = mutableListOf<MedicationObject>()
     val uploadTarget = if (file != null && file.exists()) optimizeImageForUpload(context, file) else file
+    var doctorName = ""
+    var clinicName = ""
+    var prescriptionDate = ""
+    var remarks = ""
+    var deliveryType = ""
+    var rawText = ""
 
     if (uploadTarget != null && uploadTarget.exists()) {
         try {
@@ -965,8 +1226,15 @@ private suspend fun processDocumentAndPipeline(
                 service.uploadPrescription(part)
             }
 
+            rawText = response.rawText ?: ""
             val record = response.prescriptionRecord
             if (record != null && record.medications.isNotEmpty()) {
+                doctorName = record.prescription?.prescribedBy ?: ""
+                clinicName = ""
+                prescriptionDate = record.prescription?.date ?: ""
+                remarks = record.prescription?.remarks ?: ""
+                deliveryType = record.prescription?.deliveryType ?: ""
+
                 val mapped = record.medications.map { apiMed ->
                     BackendClient.mapPrescriptionItemToObject(apiMed, record.prescription?.remarks)
                 }
@@ -991,7 +1259,17 @@ private suspend fun processDocumentAndPipeline(
         throw IllegalStateException("No medications found to ingest. Please ensure prescription is legible.")
     }
 
-    return MedicationIngestionPipeline.evaluatePipeline(context, candidateMeds)
+    val evaluated = MedicationIngestionPipeline.evaluatePipeline(context, candidateMeds)
+    return ScannedPrescriptionPackage(
+        items = evaluated,
+        imageFile = uploadTarget,
+        doctorName = doctorName,
+        clinicName = clinicName,
+        prescriptionDate = prescriptionDate,
+        remarks = remarks,
+        deliveryType = deliveryType,
+        rawOcrText = rawText
+    )
 }
 
 private suspend fun ensureServerReady(onStatus: (String) -> Unit) {

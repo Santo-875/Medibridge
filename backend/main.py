@@ -223,7 +223,7 @@ async def upload_prescription(
     if blur_score < 25.0:
         raise HTTPException(status_code=422, detail="Image too blurry. Hold the camera steady and use better lighting.")
 
-    max_dim = 800
+    max_dim = 1800
     if max(height, width) > max_dim:
         scale = float(max_dim) / max(height, width)
         image = cv2.resize(image, (int(width * scale), int(height * scale)), interpolation=cv2.INTER_AREA)

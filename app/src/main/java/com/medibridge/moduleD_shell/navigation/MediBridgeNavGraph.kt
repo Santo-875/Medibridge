@@ -101,7 +101,8 @@ fun MediBridgeNavGraph(
                 onRecordClick = { navController.navigate(Screen.Recording.route) },
                 onRecordingsListClick = { navController.navigate(Screen.ConsultationRecordings.route) },
                 onMedicinesClick = { navController.navigate(Screen.Medicines.route) },
-                onSettingsClick = { navController.navigate(Screen.Profile.route) }
+                onSettingsClick = { navController.navigate(Screen.Profile.route) },
+                onPrescriptionArchiveClick = { navController.navigate(Screen.PrescriptionArchive.route) }
             )
         }
 
@@ -219,6 +220,19 @@ fun MediBridgeNavGraph(
         ) {
             AddEditMedicationScreen(
                 onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(
+            route = Screen.PrescriptionArchive.route,
+            enterTransition = { slideIntoContainer(SlideDirection.Start, tween(280)) },
+            exitTransition = { slideOutOfContainer(SlideDirection.Start, tween(280)) },
+            popEnterTransition = { slideIntoContainer(SlideDirection.End, tween(280)) },
+            popExitTransition = { slideOutOfContainer(SlideDirection.End, tween(280)) }
+        ) {
+            PrescriptionArchiveScreen(
+                onBack = { navController.popBackStack() },
+                onNavigateToScanner = { navController.navigate(Screen.Scanner.route) }
             )
         }
     }

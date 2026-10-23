@@ -33,9 +33,10 @@ import com.medibridge.moduleB_safety.data.SafetyCheckEntity
         CareLinkEntity::class,
         DoseTimeEntity::class,
         DoseLogEntity::class,
-        UserAccountEntity::class
+        UserAccountEntity::class,
+        PrescriptionRecordEntity::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -50,6 +51,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun doseTimeDao(): DoseTimeDao
     abstract fun doseLogDao(): DoseLogDao
     abstract fun userAccountDao(): UserAccountDao
+    abstract fun prescriptionRecordDao(): PrescriptionRecordDao
 
     companion object {
         @Volatile
@@ -165,6 +167,30 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `prescription_records` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `uuid` TEXT NOT NULL,
+                        `scanTimestamp` INTEGER NOT NULL,
+                        `doctorName` TEXT NOT NULL,
+                        `clinicName` TEXT NOT NULL,
+                        `prescriptionDate` TEXT NOT NULL,
+                        `imagePath` TEXT NOT NULL,
+                        `rawOcrText` TEXT NOT NULL,
+                        `remarks` TEXT NOT NULL,
+                        `deliveryType` TEXT NOT NULL,
+                        `medicationsJson` TEXT NOT NULL,
+                        `profileId` TEXT NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        `deletedAt` INTEGER,
+                        `synced` INTEGER NOT NULL
+                    )
+                """.trimIndent())
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -172,7 +198,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "medibridge_database"
                 )
-                    .addMigrations(MIGRATION_6_7, MIGRATION_7_8)
+                    .addMigrations(MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)

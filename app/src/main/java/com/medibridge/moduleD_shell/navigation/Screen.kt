@@ -19,6 +19,7 @@ sealed class Screen(val route: String) {
     object SafetyDashboard   : Screen("safety_dashboard")
     object AddEditMedication : Screen("add_edit_medication")
     object ConsultationRecordings : Screen("consultation_recordings")
+    object PrescriptionArchive : Screen("prescription_archive")
 }
 
 sealed class BottomNavItem(
