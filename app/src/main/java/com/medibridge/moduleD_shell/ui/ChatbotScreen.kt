@@ -635,10 +635,10 @@ private fun TypingIndicator(modifier: Modifier = Modifier) {
 
 private val quickQuestions = listOf(
     "What medications are currently active?",
-    "When should I take Metformin?",
+    "When should I take my next dose?",
     "Are there any drug interactions?",
     "What are common side effects?",
-    "Who is the doctor on file?"
+    "Show my complete daily schedule"
 )
 
 @Composable

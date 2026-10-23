@@ -256,45 +256,34 @@ class ChatRepository(private val context: Context) {
         // Match specific medications mentioned in the query
         val matchedMed = medications.firstOrNull { med ->
             val nameParts = med.name.lowercase().split(" ")
-            nameParts.any { it.length > 3 && query.contains(it) }
+            nameParts.any { it.length > 2 && query.contains(it) }
         }
 
         return when {
-            query.contains("metformin") || (matchedMed != null && matchedMed.name.contains("Metformin", ignoreCase = true)) -> {
-                val med = matchedMed ?: medications.find { it.name.contains("Metformin", ignoreCase = true) }
-                val timing = med?.timing ?: "with your morning meal"
-                val dose = med?.dose ?: "500mg (1 tablet)"
+            matchedMed != null -> {
+                val timing = if (matchedMed.timing.isNotBlank()) matchedMed.timing else "as instructed on prescription"
+                val dose = if (matchedMed.dose.isNotBlank()) matchedMed.dose else matchedMed.strength
+                val scheduleDesc = if (matchedMed.schedule.isNotEmpty()) {
+                    matchedMed.schedule.joinToString(", ") { "${it.slot} at ${it.time} (${if (it.withFood) "with food" else "without food"})" }
+                } else {
+                    matchedMed.frequency
+                }
+
                 """
-                Here are the clinical details for **Metformin**:
+                Here are the clinical details for **${matchedMed.name}**:
 
                 **Dosage & Administration**
-                • **Dose**: $dose
-                • **Schedule**: $timing with a full glass of water
-                • **Clinical Purpose**: Regulating blood glucose levels for Type 2 Diabetes
+                • **Dose / Strength**: $dose (${matchedMed.strength})
+                • **Schedule**: $scheduleDesc
+                • **Instructions**: $timing
 
                 **Precautions & Safety**
-                • Take strictly with or immediately after food to avoid stomach discomfort.
-                • Report persistent nausea or dizziness to your care team.
+                • Always take with a full glass of water.
+                • Take strictly according to your prescribed schedule.
+                • If you experience unusual discomfort, dizziness, or allergic reactions, notify your doctor promptly.
 
                 **Clinical Advice**
-                • Do not alter your dosage without consulting your prescribing physician.
-                """.trimIndent()
-            }
-
-            query.contains("lisinopril") || query.contains("amlodipine") || query.contains("blood pressure") || query.contains("bp") -> {
-                """
-                Here is your blood pressure medication plan:
-
-                **Dosage & Administration**
-                • **Lisinopril 10mg**: Take 1 tablet every morning after breakfast.
-                • **Amlodipine 5mg**: Take 1 tablet at bedtime.
-
-                **Precautions & Safety**
-                • These medications work synergistically to lower blood pressure.
-                • Stand up gradually from sitting or lying down to prevent mild lightheadedness.
-
-                **Clinical Advice**
-                • Record your blood pressure readings twice weekly and share them at your next visit.
+                • Do not adjust or stop your dosage without consulting your prescribing physician.
                 """.trimIndent()
             }
 
@@ -303,41 +292,45 @@ class ChatRepository(private val context: Context) {
                 Guidance for a missed medication dose:
 
                 **Immediate Steps**
-                • **Take the missed dose as soon as you remember**, provided your next scheduled dose is not near.
-                • **Do not double up**: Never take two doses together to compensate for a missed dose.
+                • **Take the missed dose as soon as you remember**, unless your next scheduled dose is coming up soon.
+                • **Never double up**: Do not take two doses at once to make up for a missed dose.
 
                 **Precautions & Safety**
-                • If more than 4 hours have passed past your schedule, wait for the next dose.
-                • Your caregiver will receive an alert if critical doses remain unconfirmed.
+                • If it is almost time for your next scheduled dose, skip the missed one and continue your normal schedule.
+                • Check your MediBridge schedule to verify your upcoming dose times.
 
                 **Clinical Advice**
-                • Reach out to your pharmacist or doctor if you miss more than one consecutive dose.
+                • Reach out to your pharmacist or healthcare provider if you have missed more than one consecutive dose.
                 """.trimIndent()
             }
 
             query.contains("side effect") || query.contains("reaction") -> {
-                """
-                Side effect guidelines for your active prescriptions:
-
-                **Common Sensations**
-                • **Metformin**: Mild stomach upset or nausea; taking with food helps.
-                • **Lisinopril**: Dry persistent cough or mild dizziness.
-                • **Amlodipine**: Mild peripheral swelling in ankles or feet.
-
-                **Precautions & Safety**
-                • If you experience swelling of lips, throat, or shortness of breath, seek emergency medical care.
-
-                **Clinical Advice**
-                • Notify your doctor if mild side effects persist past two weeks.
-                """.trimIndent()
+                if (medications.isEmpty()) {
+                    """
+                    **Side Effects Guidance**
+                    • You have no active medications currently registered in your profile.
+                    • If you've been prescribed medicine, tap **Scan Prescription** to log your medications.
+                    """.trimIndent()
+                } else {
+                    buildString {
+                        appendLine("General side effect precautions for your active prescription(s):\n")
+                        appendLine("**Active Medications**")
+                        medications.forEach { med ->
+                            appendLine("• **${med.name}** (${med.dose}): Monitor for mild GI upset, dizziness, or headache when beginning therapy.")
+                        }
+                        appendLine("\n**Important Safety Advice**")
+                        appendLine("• Seek emergency medical attention if you experience severe symptoms like difficulty breathing, chest pain, or facial swelling.")
+                        appendLine("• For mild, ongoing side effects, discuss alternative options with your prescribing doctor.")
+                    }.trimEnd()
+                }
             }
 
-            query.contains("schedule") || query.contains("when") || query.contains("time") -> {
+            query.contains("schedule") || query.contains("when") || query.contains("time") || query.contains("dose") -> {
                 if (medications.isEmpty()) {
                     """
                     **Medication Schedule**
                     • No active medications registered yet in your MediBridge profile.
-                    • Tap the **Camera** button to scan a prescription or pharmacy receipt.
+                    • Tap the **Scan Prescription** button or add a medication to configure your schedule.
                     """.trimIndent()
                 } else {
                     buildString {
@@ -352,39 +345,58 @@ class ChatRepository(private val context: Context) {
                             appendLine("• **${med.name}**: $sched ($med.dose)")
                         }
                         appendLine("\n**Clinical Advice**")
-                        appendLine("• Take your doses at the same times each day for optimal adherence.")
+                        appendLine("• Take your doses at consistent times each day for maximum therapeutic effect.")
                     }.trimEnd()
                 }
             }
 
-            matchedMed != null -> {
-                """
-                Clinical information for **${matchedMed.name}**:
-
-                **Prescription Details**
-                • **Dose & Strength**: ${matchedMed.dose} (${matchedMed.strength})
-                • **Frequency**: ${matchedMed.frequency}
-                • **Instructions**: ${matchedMed.timing}
-                • **Verification Status**: ${if (matchedMed.needsVerification) "Needs Verification" else "Verified"}
-
-                **Clinical Advice**
-                • Review with your pharmacist or doctor before making changes to your regimen.
-                """.trimIndent()
+            query.contains("interaction") || query.contains("conflict") || query.contains("safe") -> {
+                if (medications.size < 2) {
+                    """
+                    **Medication Safety Check**
+                    • You have ${medications.size} active medication registered.
+                    • Drug-drug interaction audits require 2 or more concurrent medications.
+                    • Tap **Medication Safety** from the menu to run a full clinical interaction audit.
+                    """.trimIndent()
+                } else {
+                    buildString {
+                        appendLine("Safety summary for your concurrent medications (${medications.joinToString { it.name }}):\n")
+                        appendLine("• Automated clinical safety checks run continuously on your active medications.")
+                        appendLine("• Navigate to the **Medication Safety** screen to view full interaction ratings and details.")
+                        appendLine("\n**Clinical Advice**")
+                        appendLine("• Always inform your physician and pharmacist about all prescription and OTC medications you take.")
+                    }.trimEnd()
+                }
             }
 
             else -> {
-                """
-                I've reviewed your active MediBridge health record:
+                if (medications.isNotEmpty()) {
+                    val firstMed = medications.first().name
+                    """
+                    I've reviewed your active MediBridge health record:
 
-                **Summary**
-                • You have **${medications.size} active medication(s)** registered in your profile.
+                    **Summary**
+                    • You have **${medications.size} active medication(s)** registered: ${medications.joinToString { it.name }}.
 
-                **Questions You Can Ask**
-                • *"When should I take Metformin?"*
-                • *"What are the side effects of Lisinopril?"*
-                • *"What should I do if I missed a dose?"*
-                • *"Show my complete daily schedule."*
-                """.trimIndent()
+                    **Questions You Can Ask**
+                    • *"When should I take $firstMed?"*
+                    • *"What are the common side effects of $firstMed?"*
+                    • *"What should I do if I missed a dose?"*
+                    • *"Show my complete daily schedule."*
+                    """.trimIndent()
+                } else {
+                    """
+                    Welcome to Medi AI!
+
+                    **Summary**
+                    • You have no active medications registered yet in your profile.
+
+                    **Getting Started**
+                    • Tap **Scan Prescription** to import your medications from a prescription slip.
+                    • Or tap **+** on the Medicines screen to add your medications manually.
+                    • Ask me questions anytime about dose timing, missed doses, or side effects!
+                    """.trimIndent()
+                }
             }
         }
     }
