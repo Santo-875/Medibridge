@@ -406,6 +406,7 @@ class ChatResponse(BaseModel):
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat_with_medi_ai(request: ChatRequest):
     msg = request.message.strip()
+    logging.info(f"[CHAT] Received request: '{msg[:60]}...'")
     if not msg:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 

@@ -200,6 +200,7 @@ object BackendClient {
             val request = chain.request()
             val builder = request.newBuilder()
                 .header("X-API-Key", AppNetworkConfig.apiKey)
+                .header("ngrok-skip-browser-warning", "true")
             appContext?.let { ctx ->
                 val tokenMgr = com.medibridge.core.auth.AuthTokenManager.getInstance(ctx)
                 val token = tokenMgr.getToken()

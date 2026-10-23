@@ -125,14 +125,14 @@ class ChatRepository(private val context: Context) {
             if (backendResp.reply.isNotBlank()) {
                 Log.i(TAG, "[CHAT_PATH: BACKEND_AI_SUCCESS] Sourced via ${backendResp.source}")
                 return@withContext backendResp.reply.trim()
+            } else {
+                return@withContext "I received an empty response from Medi AI. Please try rephrasing your question."
             }
         } catch (backendErr: Exception) {
-            Log.w(TAG, "[CHAT_PATH: BACKEND_AI_FALLBACK] Backend chat failed: ${backendErr.message}, falling back to local RAG", backendErr)
+            Log.e(TAG, "[CHAT_PATH: BACKEND_AI_ERROR] Backend chat failed: ${backendErr.message}", backendErr)
+            val activeUrl = BackendClient.getBaseUrl()
+            return@withContext "⚠️ Unable to connect to Medi AI server (${backendErr.localizedMessage ?: backendErr.message ?: "Connection error"}).\n\nActive Server URL: $activeUrl\n\nPlease verify that your server/ngrok tunnel is running or update the URL in Settings."
         }
-
-        Log.i(TAG, "[CHAT_PATH: LOCAL_RAG_FALLBACK] Serving local clinical rule response for: $trimmedQuery")
-        val lowerQuery = trimmedQuery.lowercase()
-        return@withContext buildLocalRagResponse(lowerQuery, medications, contextBlock)
     }
 
     /**
