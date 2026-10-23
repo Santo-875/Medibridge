@@ -13,20 +13,37 @@ from auth import get_current_user, get_accessible_profile_ids, get_user_profile_
 
 router = APIRouter(prefix="/sync", tags=["sync"])
 
+def normalize_dt(dt: Optional[datetime]) -> Optional[datetime]:
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
 def parse_dt(val: Any) -> Optional[datetime]:
     if not val:
         return None
     if isinstance(val, datetime):
-        return val
+        return normalize_dt(val)
     try:
         if isinstance(val, (int, float)):
-            # Handle epoch millis or secs
             ts = val / 1000.0 if val > 1e11 else float(val)
-            return datetime.fromtimestamp(ts, tz=timezone.utc)
+            dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+            return normalize_dt(dt)
         s = str(val).strip().replace("Z", "+00:00")
-        return datetime.fromisoformat(s)
+        dt = datetime.fromisoformat(s)
+        return normalize_dt(dt)
     except Exception:
         return None
+
+def is_newer(client_dt: Optional[datetime], server_dt: Optional[datetime]) -> bool:
+    if not server_dt:
+        return True
+    if not client_dt:
+        return False
+    c = normalize_dt(client_dt)
+    s = normalize_dt(server_dt)
+    return c > s
 
 def to_iso(dt: Optional[datetime]) -> Optional[str]:
     return dt.isoformat() if dt else None
@@ -233,7 +250,7 @@ def sync_push(
             # Check owner
             if existing.owner_user_id != current_user.id:
                 continue
-            if not existing.updated_at or client_updated > existing.updated_at:
+            if is_newer(client_updated, existing.updated_at):
                 existing.name = p_data.get("name", existing.name)
                 existing.avatar = p_data.get("avatar", existing.avatar)
                 existing.updated_at = client_updated
@@ -266,7 +283,7 @@ def sync_push(
         existing = db.query(Medication).filter(Medication.id == m_id).first()
 
         if existing:
-            if not existing.updated_at or client_updated > existing.updated_at:
+            if is_newer(client_updated, existing.updated_at):
                 existing.name = m_data.get("name", existing.name)
                 existing.dosage = m_data.get("dosage", existing.dosage)
                 existing.strength = m_data.get("strength", existing.strength)
@@ -310,7 +327,7 @@ def sync_push(
         existing = db.query(DoseTime).filter(DoseTime.id == dt_id).first()
 
         if existing:
-            if not existing.updated_at or client_updated > existing.updated_at:
+            if is_newer(client_updated, existing.updated_at):
                 existing.time = dt_data.get("time", existing.time)
                 existing.slot = dt_data.get("slot", existing.slot)
                 existing.updated_at = client_updated
@@ -344,7 +361,7 @@ def sync_push(
         existing = db.query(DoseLog).filter(DoseLog.id == l_id).first()
 
         if existing:
-            if not existing.updated_at or client_updated > existing.updated_at:
+            if is_newer(client_updated, existing.updated_at):
                 existing.status = l_data.get("status", existing.status)
                 existing.taken_at = parse_dt(l_data.get("taken_at"))
                 existing.snooze_until = parse_dt(l_data.get("snooze_until"))
@@ -379,7 +396,7 @@ def sync_push(
         existing = db.query(SafetyCheck).filter(SafetyCheck.id == s_id).first()
 
         if existing:
-            if not existing.updated_at or client_updated > existing.updated_at:
+            if is_newer(client_updated, existing.updated_at):
                 existing.conflict_type = s_data.get("conflict_type", existing.conflict_type)
                 existing.severity = s_data.get("severity", existing.severity)
                 existing.details = s_data.get("details", existing.details)
@@ -415,7 +432,7 @@ def sync_push(
         existing = db.query(Notification).filter(Notification.id == n_id).first()
 
         if existing:
-            if not existing.updated_at or client_updated > existing.updated_at:
+            if is_newer(client_updated, existing.updated_at):
                 existing.message = n_data.get("message", existing.message)
                 existing.is_read = bool(n_data.get("is_read", existing.is_read))
                 existing.updated_at = client_updated

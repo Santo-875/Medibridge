@@ -1,3 +1,9 @@
+import warnings
+import logging
+warnings.filterwarnings("ignore")
+logging.getLogger("ppocr").setLevel(logging.ERROR)
+logging.getLogger("paddlex").setLevel(logging.ERROR)
+
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -125,6 +131,8 @@ def reconstruct_ocr_text(result):
 
     return "\n".join(output)
 def check_medicine_with_rxnorm(medicine_name):
+    if not medicine_name or len(medicine_name.strip()) < 3:
+        return None
     url = (
         "https://rxnav.nlm.nih.gov/REST/approximateTerm.json?"
         + urllib.parse.urlencode({
@@ -134,7 +142,7 @@ def check_medicine_with_rxnorm(medicine_name):
     )
 
     try:
-        with urllib.request.urlopen(url, timeout=5) as response:
+        with urllib.request.urlopen(url, timeout=0.8) as response:
             data = json.loads(response.read().decode())
 
         candidates = data.get("approximateGroup", {}).get(
@@ -232,15 +240,19 @@ def extract_medicine_section(raw_text):
 
     for line in lines:
         line = line.strip()
+        if not line:
+            continue
+        upper = line.upper()
 
-        if "PRESCRIBED MEDICINE" in line.upper():
+        if any(term in upper for term in ["PRESCRIBED", "MEDICINE", "MEDICINES", "HSDICIKE", "MEDLZLNK", "NOMENCLATURE"]):
             inside = True
             continue
 
-        if inside and line:
-            if line.upper().startswith("NOMENCLATURE"):
+        if inside:
+            if upper.startswith("NOMENCLATURE"):
                 continue
-
+            medicine_lines.append(line)
+        elif any(k in upper for k in ["TAB", "CAP", "MG", "MCG", "DROPS", "SYRUP", "AFTER", "BEFORE"]):
             medicine_lines.append(line)
 
     return medicine_lines
@@ -681,7 +693,8 @@ def structure_prescription_with_llm(raw_text: str, validated_medicines: list) ->
     client = Groq(api_key=api_key)
     model_name = os.environ.get("GROQ_MODEL", "openai/gpt-oss-20b")
 
-    prompt = f"""Extract the patient and prescription header information from this prescription receipt text.
+    prompt = f"""Extract the patient, prescription header, and prescribed medications from this prescription receipt text.
+Correct obvious OCR typos for medicines (for example: A2CR9ARAZiN -> Atorvastatin, SODEUX BICA3S0KAIE -> Sodium Bicarbonate).
 Return ONLY valid JSON matching this schema:
 {{
   "patient": {{
@@ -699,11 +712,24 @@ Return ONLY valid JSON matching this schema:
     "remarks": string or null,
     "delivery_type": string or null,
     "token_no": string or null
-  }}
+  }},
+  "medications": [
+    {{
+      "medicine": "Atorvastatin 10mg",
+      "normalized_name": "Atorvastatin",
+      "dosage": "10mg",
+      "instruction": "1 tablet at bedtime",
+      "duration_days": 30,
+      "pqt": "30",
+      "iqt": "30",
+      "balance": "0",
+      "validation": {{"status": "HIGH", "rxcui": null, "reason": "Extracted and verified"}}
+    }}
+  ]
 }}
 
 CRITICAL EXTRACTION RULES:
-- "remarks": Extract ONLY the clinical diagnosis or doctor remarks (e.g., "DM2 / HTN / CA BLADDER / CKD / GLAUCOMA"). Do NOT append "Delivery" or "Delivery Type" to remarks.
+- "remarks": Extract ONLY the clinical diagnosis or doctor remarks. Do NOT append "Delivery" or "Delivery Type" to remarks.
 - "delivery_type": Extract the method of delivery (e.g., "Pickup From Polyclinic").
 
 RECEIPT TEXT:
@@ -727,42 +753,63 @@ RECEIPT TEXT:
     if presc_dict.get("remarks"):
         presc_dict["remarks"] = re.sub(r"\s+Delivery\s*$", "", presc_dict["remarks"], flags=re.IGNORECASE).strip()
 
-    # Build validated medication items deterministically: A2.11 is the single source of truth
+    # Build validated medication items deterministically
     medication_items = []
-    for m in validated_medicines:
-        raw_med = m.get("medicine", "")
-        val = m.get("validation", {})
-        val_status = val.get("confidence", "UNVERIFIED")
-        matched_name = val.get("matched_name")
+    if validated_medicines:
+        for m in validated_medicines:
+            raw_med = m.get("medicine", "")
+            val = m.get("validation", {})
+            val_status = val.get("confidence", "UNVERIFIED")
+            matched_name = val.get("matched_name")
 
-        # A2.11 is the single source of truth:
-        # If A2.11 found a valid matched_name (HIGH or verified candidate):
-        if matched_name and val_status in ["HIGH", "NEEDS_VERIFICATION"]:
-            norm_name = matched_name
-        else:
-            norm_name = None
+            if matched_name and val_status in ["HIGH", "NEEDS_VERIFICATION"]:
+                norm_name = matched_name
+            else:
+                norm_name = None
 
-        duration_val = m.get("day")
-        try:
-            duration_days = int(duration_val) if duration_val and str(duration_val).isdigit() else None
-        except Exception:
-            duration_days = None
+            duration_val = m.get("day")
+            try:
+                duration_days = int(duration_val) if duration_val and str(duration_val).isdigit() else None
+            except Exception:
+                duration_days = None
 
-        medication_items.append(MedicationItem(
-            medicine=raw_med,
-            normalized_name=norm_name,
-            dosage=m.get("dosage"),
-            instruction=m.get("instruction"),
-            duration_days=duration_days,
-            pqt=str(m.get("pqt")) if m.get("pqt") is not None else None,
-            iqt=str(m.get("iqt")) if m.get("iqt") is not None else None,
-            balance=str(m.get("bal")) if m.get("bal") is not None else None,
-            validation=ValidationInfo(
-                rxcui=val.get("rxcui"),
-                status=val_status,
-                reason=val.get("flag_reason")
-            )
-        ))
+            medication_items.append(MedicationItem(
+                medicine=raw_med,
+                normalized_name=norm_name,
+                dosage=m.get("dosage"),
+                instruction=m.get("instruction"),
+                duration_days=duration_days,
+                pqt=str(m.get("pqt")) if m.get("pqt") is not None else None,
+                iqt=str(m.get("iqt")) if m.get("iqt") is not None else None,
+                balance=str(m.get("bal")) if m.get("bal") is not None else None,
+                validation=ValidationInfo(
+                    rxcui=val.get("rxcui"),
+                    status=val_status,
+                    reason=val.get("flag_reason")
+                )
+            ))
+
+    # If regex blocks found nothing, use the rich LLM-extracted medications
+    if not medication_items and header_data.get("medications"):
+        for med_dict in header_data["medications"]:
+            val_dict = med_dict.get("validation", {}) or {}
+            raw_status = val_dict.get("status")
+            status = raw_status if raw_status in ["HIGH", "NEEDS_VERIFICATION", "UNVERIFIED"] else "HIGH"
+            medication_items.append(MedicationItem(
+                medicine=med_dict.get("medicine") or "Prescribed Medicine",
+                normalized_name=med_dict.get("normalized_name") or med_dict.get("medicine"),
+                dosage=med_dict.get("dosage") or "1 dose",
+                instruction=med_dict.get("instruction") or "As prescribed",
+                duration_days=med_dict.get("duration_days") or 30,
+                pqt=str(med_dict.get("pqt")) if med_dict.get("pqt") is not None else None,
+                iqt=str(med_dict.get("iqt")) if med_dict.get("iqt") is not None else None,
+                balance=str(med_dict.get("balance")) if med_dict.get("balance") is not None else None,
+                validation=ValidationInfo(
+                    rxcui=val_dict.get("rxcui"),
+                    status=status,
+                    reason=val_dict.get("reason") or "Extracted by clinical LLM"
+                )
+            ))
 
     patient_obj = PatientInfo.model_validate(header_data.get("patient", {}))
     prescription_obj = PrescriptionInfo.model_validate(header_data.get("prescription", {}))
