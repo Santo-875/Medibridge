@@ -169,11 +169,23 @@ interface BackendApiService {
         @Body request: DeviceRegisterRequest
     ): Map<String, Any>
 
+    @GET("api/health")
+    suspend fun checkHealth(): HealthResponse
+
     @POST("api/chat")
     suspend fun chatWithAi(
         @Body request: ChatApiRequest
     ): ChatApiResponse
+
+    @POST("api/safety/analyze")
+    suspend fun analyzeSafety(
+        @Body request: BackendSafetyRequest
+    ): BackendSafetyResponse
 }
+
+data class HealthResponse(
+    @SerializedName("ocr_ready") val ocrReady: Boolean = false
+)
 
 data class ChatApiRequest(
     val message: String,
@@ -183,6 +195,21 @@ data class ChatApiRequest(
 data class ChatApiResponse(
     val reply: String,
     val source: String? = null
+)
+
+data class BackendSafetyRequest(
+    val candidateMedicine: Map<String, Any?>? = null,
+    val findings: List<Map<String, Any?>> = emptyList(),
+    val crossVerified: Boolean = false,
+    val reviewRecommended: Boolean = false
+)
+
+data class BackendSafetyResponse(
+    val flagged: Boolean = false,
+    val severity: String = "LOW",
+    val title: String = "",
+    val message: String = "",
+    val recommendation: String = ""
 )
 
 // ── Backend Repository & Mapping ─────────────────────────────────────────────

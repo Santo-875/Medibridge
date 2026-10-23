@@ -40,18 +40,7 @@ object GeminiConfigProvider {
      * 5. Local .env file if running in local/test environment
      */
     fun getApiKey(): String? {
-        // 1. Runtime override (e.g. user typed it in Settings)
         runtimeApiKey?.let { if (it.isNotBlank() && it != "your_gemini_api_key_here") return it }
-
-        // 2. BuildConfig — baked from .env at build time (PRIMARY on-device path)
-        try {
-            val buildKey = BuildConfig.GEMINI_API_KEY
-            if (buildKey.isNotBlank() && buildKey != "your_gemini_api_key_here") {
-                return buildKey
-            }
-        } catch (_: Exception) {
-            // BuildConfig not available in pure JVM unit tests — fall through
-        }
 
         // 3. System environment variable
         val envKey = System.getenv("GEMINI_API_KEY")

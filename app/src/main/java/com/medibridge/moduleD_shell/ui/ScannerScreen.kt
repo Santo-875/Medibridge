@@ -89,9 +89,9 @@ private fun extractDetailedError(e: Throwable): ScannerUiState.Error {
     if (e is TimeoutCancellationException) {
         val serverUrl = BackendClient.getBaseUrl()
         return ScannerUiState.Error(
-            title = "Scan Timed Out (45s)",
-            message = "The prescription scan exceeded 45 seconds. The server might be busy or PaddleOCR is taking longer to process the image.",
-            technicalDetails = "Exception: TimeoutCancellationException\nDuration: 45,000 ms\nTarget Server: $serverUrl\nSuggestion: Ensure backend server and ngrok tunnel are running."
+            title = "Scan Timed Out (120s)",
+            message = "The prescription scan exceeded 120 seconds. The server might be busy or processing a complex image.",
+            technicalDetails = "Exception: TimeoutCancellationException\nDuration: 120,000 ms\nTarget Server: $serverUrl\nSuggestion: Ensure backend server and ngrok tunnel are running."
         )
     }
 
@@ -239,8 +239,11 @@ fun ScannerScreen(
                         tempFile
                     }
 
+                    ensureServerReady { status ->
+                        uiState = ScannerUiState.Analyzing(status)
+                    }
                     uiState = ScannerUiState.Analyzing("Extracting prescription items with AI...")
-                    val pipelineResults = withTimeout(45_000L) {
+                    val pipelineResults = withTimeout(120_000L) {
                         processDocumentAndPipeline(context, fileToProcess)
                     }
                     uiState = ScannerUiState.Review(pipelineResults)
@@ -398,8 +401,11 @@ fun ScannerScreen(
                                                     override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                                                         processingJob = scope.launch {
                                                             try {
+                                                                ensureServerReady { status ->
+                                                                    uiState = ScannerUiState.Analyzing(status)
+                                                                }
                                                                 uiState = ScannerUiState.Analyzing("Extracting medicine details with OCR...")
-                                                                val pipelineResults = withTimeout(45_000L) {
+                                                                val pipelineResults = withTimeout(120_000L) {
                                                                     processDocumentAndPipeline(context, photoFile)
                                                                 }
                                                                 uiState = ScannerUiState.Review(pipelineResults)
@@ -987,3 +993,19 @@ private suspend fun processDocumentAndPipeline(
 
     return MedicationIngestionPipeline.evaluatePipeline(context, candidateMeds)
 }
+
+private suspend fun ensureServerReady(onStatus: (String) -> Unit) {
+    val service = BackendClient.getService()
+    val startTime = System.currentTimeMillis()
+    while (System.currentTimeMillis() - startTime < 60_000L) {
+        try {
+            val health = service.checkHealth()
+            if (health.ocrReady) {
+                return
+            }
+        } catch (_: Exception) {}
+        onStatus("Server is warming up, please wait a moment...")
+        kotlinx.coroutines.delay(5_000L)
+    }
+}
+

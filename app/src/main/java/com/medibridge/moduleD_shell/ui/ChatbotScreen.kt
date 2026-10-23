@@ -56,7 +56,28 @@ fun ChatbotScreen(onBack: () -> Unit) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
-    // Auto-scroll to bottom on new message
+    val sendUserMessage: (String) -> Unit = { queryText ->
+        val trimmed = queryText.trim()
+        if (trimmed.isNotEmpty()) {
+            messages.add(ChatMessage(id = UUID.randomUUID().toString(), text = trimmed, isBot = false))
+            isBotTyping = true
+            scope.launch {
+                val reply = chatRepository.sendMessage(trimmed)
+                isBotTyping = false
+                val isErr = reply.startsWith("⚠️")
+                messages.add(
+                    ChatMessage(
+                        id = UUID.randomUUID().toString(),
+                        text = reply,
+                        isBot = true,
+                        isError = isErr,
+                        retryQuery = if (isErr) trimmed else null
+                    )
+                )
+            }
+        }
+    }
+
     LaunchedEffect(messages.size, isBotTyping) {
         if (messages.isNotEmpty()) {
             listState.animateScrollToItem(messages.size - 1)
@@ -185,7 +206,7 @@ fun ChatbotScreen(onBack: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(messages, key = { it.id }) { msg ->
-                    ChatBubble(message = msg)
+                    ChatBubble(message = msg, onRetry = { retryText -> sendUserMessage(retryText) })
                 }
 
                 if (isBotTyping) {
@@ -217,22 +238,9 @@ fun ChatbotScreen(onBack: () -> Unit) {
                 }
             }
 
-            // Quick Questions suggestion chips
             QuickSuggestions { question ->
                 messageText = ""
-                messages.add(ChatMessage(id = UUID.randomUUID().toString(), text = question, isBot = false))
-                isBotTyping = true
-                scope.launch {
-                    val reply = chatRepository.sendMessage(question)
-                    isBotTyping = false
-                    messages.add(
-                        ChatMessage(
-                            id = UUID.randomUUID().toString(),
-                            text = reply,
-                            isBot = true
-                        )
-                    )
-                }
+                sendUserMessage(question)
             }
 
             HorizontalDivider(
@@ -273,20 +281,8 @@ fun ChatbotScreen(onBack: () -> Unit) {
                     onClick = {
                         val trimmed = messageText.trim()
                         if (trimmed.isNotEmpty()) {
-                            messages.add(ChatMessage(id = UUID.randomUUID().toString(), text = trimmed, isBot = false))
                             messageText = ""
-                            isBotTyping = true
-                            scope.launch {
-                                val reply = chatRepository.sendMessage(trimmed)
-                                isBotTyping = false
-                                messages.add(
-                                    ChatMessage(
-                                        id = UUID.randomUUID().toString(),
-                                        text = reply,
-                                        isBot = true
-                                    )
-                                )
-                            }
+                            sendUserMessage(trimmed)
                         }
                     },
                     modifier = Modifier.size(48.dp),
@@ -305,10 +301,16 @@ fun ChatbotScreen(onBack: () -> Unit) {
     }
 }
 
-data class ChatMessage(val id: String, val text: String, val isBot: Boolean)
+data class ChatMessage(
+    val id: String,
+    val text: String,
+    val isBot: Boolean,
+    val isError: Boolean = false,
+    val retryQuery: String? = null
+)
 
 @Composable
-private fun ChatBubble(message: ChatMessage) {
+private fun ChatBubble(message: ChatMessage, onRetry: ((String) -> Unit)? = null) {
     val bubbleColor = if (message.isBot)
         MaterialTheme.colorScheme.surface
     else
@@ -409,8 +411,28 @@ private fun ChatBubble(message: ChatMessage) {
                             color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)
                         )
 
-                        // Rich structured layout
                         StructuredBotResponse(text = message.text)
+
+                        if (message.isError && message.retryQuery != null) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            OutlinedButton(
+                                onClick = { onRetry?.invoke(message.retryQuery) },
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.error
+                                ),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.6f)),
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = "Retry",
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Retry", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
                     }
                 }
             }

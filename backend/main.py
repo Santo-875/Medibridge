@@ -91,7 +91,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount API routers
+import numpy as np
+
+ocr_ready = False
+
+async def _warmup_ocr():
+    global ocr_ready
+    try:
+        logging.info("[MediBridge] OCR warmup starting...")
+        dummy = np.zeros((64, 64, 3), dtype=np.uint8)
+        if ocr is not None:
+            await asyncio.to_thread(ocr.predict, dummy)
+        ocr_ready = True
+        logging.info("[MediBridge] OCR warmup finished. Model is ready.")
+    except Exception as e:
+        logging.warning(f"[MediBridge] OCR warmup failed: {e}")
+        ocr_ready = True
+
+@app.on_event("startup")
+async def startup_warmup():
+    asyncio.create_task(_warmup_ocr())
+
+@app.get("/api/health")
+def get_health():
+    return {"ocr_ready": ocr_ready}
+
 app.include_router(auth_router)
 app.include_router(profile_router)
 app.include_router(sync_router)
@@ -475,6 +499,89 @@ GUIDELINES:
 
     raise HTTPException(status_code=502, detail="AI services are temporarily unavailable. Please try again shortly.")
 
+class SafetyAnalyzeRequest(BaseModel):
+    candidateMedicine: Optional[dict] = None
+    findings: list[dict] = []
+    crossVerified: bool = False
+    reviewRecommended: bool = False
+
+class SafetyAnalyzeResponse(BaseModel):
+    flagged: bool
+    severity: str
+    title: str
+    message: str
+    recommendation: str
+
+@app.post("/api/safety/analyze", response_model=SafetyAnalyzeResponse)
+async def analyze_safety(request: SafetyAnalyzeRequest):
+    prompt = f"""You are a clinical communication assistant in MediBridge AI.
+The factual safety engine has detected the following structured medication safety findings:
+{request.model_dump_json()}
+
+Task:
+Provide a polite, professional, and patient-understandable explanation.
+Do NOT prescribe, change dosage, or diagnose. Do NOT invent new findings.
+Return ONLY valid JSON matching this schema:
+{{"flagged": boolean, "severity": "LOW"|"MODERATE"|"HIGH", "title": string, "message": string, "recommendation": string}}
+"""
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if gemini_key and gemini_key != "your_gemini_api_key_here":
+        try:
+            from google import genai
+            client = genai.Client(api_key=gemini_key)
+            for gmodel in ["gemini-3.6-flash", "gemini-3.8-flash"]:
+                try:
+                    resp = await asyncio.to_thread(
+                        client.models.generate_content,
+                        model=gmodel,
+                        contents=prompt
+                    )
+                    if resp and resp.text:
+                        raw = resp.text.strip().replace("```json", "").replace("```", "").strip()
+                        parsed = json.loads(raw)
+                        return SafetyAnalyzeResponse(**parsed)
+                except Exception:
+                    continue
+        except Exception as e:
+            logging.warning(f"Gemini safety analysis failed: {e}")
+
+    groq_key = os.getenv("GROQ_API_KEY")
+    if groq_key:
+        try:
+            from groq import Groq
+            groq_client = Groq(api_key=groq_key)
+            models = ["openai/gpt-oss-20b", "qwen/qwen3.8-27b", "openai/gpt-oss-120b"]
+            for m in models:
+                try:
+                    def _call_groq(model_name):
+                        return groq_client.chat.completions.create(
+                            model=model_name,
+                            messages=[
+                                {"role": "system", "content": "You are a clinical communication safety assistant. Output only raw JSON."},
+                                {"role": "user", "content": prompt}
+                            ],
+                            temperature=0.1
+                        )
+                    completion = await asyncio.to_thread(_call_groq, m)
+                    content = completion.choices[0].message.content
+                    if content and content.strip():
+                        raw = content.strip().replace("```json", "").replace("```", "").strip()
+                        parsed = json.loads(raw)
+                        return SafetyAnalyzeResponse(**parsed)
+                except Exception:
+                    continue
+        except Exception as e:
+            logging.warning(f"Groq safety analysis failed: {e}")
+
+    return SafetyAnalyzeResponse(
+        flagged=len(request.findings) > 0,
+        severity="MODERATE" if request.findings else "LOW",
+        title="Medication Safety Review",
+        message="Please verify these medications with your physician or pharmacist.",
+        recommendation="Consult your healthcare provider before combining these medications."
+    )
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+

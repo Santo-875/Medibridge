@@ -20,7 +20,6 @@ android {
 
         val envFile = rootProject.file(".env")
         var envBackendUrl = "http://10.0.2.2:8000/"
-        var envGeminiKey = ""
         var envApiKey = "medibridge_secret_api_key_2026"
         if (envFile.exists()) {
             envFile.forEachLine { line ->
@@ -40,7 +39,6 @@ android {
             }
         }
         buildConfigField("String", "BACKEND_BASE_URL", "\"$envBackendUrl\"")
-        buildConfigField("String", "GEMINI_API_KEY", "\"\"")
         buildConfigField("String", "API_KEY", "\"$envApiKey\"")
     }
 
