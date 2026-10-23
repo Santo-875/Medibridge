@@ -81,15 +81,31 @@ object ScheduleEngine {
             }
         }
 
-        // 3. Frequency patterns
-        val isOnceDaily = freqClean.contains("once") || freqClean.contains("1 time") ||
-                freqClean.contains("1x") || freqClean == "daily" || freqClean == "od" || freqClean == "q.d." || freqClean == "qd"
-        val isTwiceDaily = freqClean.contains("twice") || freqClean.contains("2 times") ||
-                freqClean.contains("2x") || freqClean.contains("bid") || freqClean.contains("b.i.d.")
-        val isThreeTimesDaily = freqClean.contains("three times") || freqClean.contains("3 times") ||
-                freqClean.contains("3x") || freqClean.contains("thrice") || freqClean.contains("tid") || freqClean.contains("t.i.d.")
+        val tokens = (freqClean.split(Regex("[^a-z0-9.]+")) + timingClean.split(Regex("[^a-z0-9.]+"))).filter { it.isNotBlank() }
+        val isHsOnly = tokens.contains("hs") || tokens.contains("h.s.") || freqClean.contains("hs") || timingClean.contains("hs") || timingClean.contains("bedtime") || timingClean.contains("at bed")
+
         val isFourTimesDaily = freqClean.contains("four times") || freqClean.contains("4 times") ||
-                freqClean.contains("4x") || freqClean.contains("qid") || freqClean.contains("q.i.d.")
+                freqClean.contains("4x") || freqClean.contains("qid") || freqClean.contains("q.i.d.") ||
+                tokens.contains("qid") || tokens.contains("q.i.d.")
+
+        val isThreeTimesDaily = freqClean.contains("three times") || freqClean.contains("3 times") ||
+                freqClean.contains("3x") || freqClean.contains("thrice") ||
+                freqClean.contains("1 x td") || freqClean.contains("1xtd") ||
+                freqClean.contains("1 x tds") || freqClean.contains("1xtds") ||
+                tokens.contains("tid") || tokens.contains("t.i.d.") ||
+                tokens.contains("td") || tokens.contains("t.d.") ||
+                tokens.contains("tds") || tokens.contains("t.d.s.")
+
+        val isTwiceDaily = freqClean.contains("twice") || freqClean.contains("2 times") ||
+                freqClean.contains("2x") ||
+                freqClean.contains("1 x bd") || freqClean.contains("1xbd") ||
+                tokens.contains("bid") || tokens.contains("b.i.d.") ||
+                tokens.contains("bd") || tokens.contains("b.d.")
+
+        val isOnceDaily = freqClean.contains("once") || freqClean.contains("1 time") ||
+                freqClean.contains("1x") || freqClean.contains("daily") ||
+                freqClean.contains("1 x od") || freqClean.contains("1xod") ||
+                tokens.contains("od") || tokens.contains("q.d.") || tokens.contains("qd") || isHsOnly
 
         val slots = when {
             isFourTimesDaily -> listOf(
@@ -100,36 +116,36 @@ object ScheduleEngine {
             )
             isThreeTimesDaily -> listOf(
                 ScheduleSlot(
-                    time = if (timingClean.contains("after breakfast")) TIME_AFTER_BREAKFAST else TIME_MORNING,
+                    time = if (timingClean.contains("after breakfast") || (timingClean.contains("after") && timingClean.contains("breakfast"))) TIME_AFTER_BREAKFAST else TIME_MORNING,
                     slot = "Morning",
                     withFood = withFood
                 ),
                 ScheduleSlot(
-                    time = if (timingClean.contains("after lunch")) TIME_AFTER_LUNCH else TIME_AFTERNOON,
+                    time = if (timingClean.contains("after lunch") || (timingClean.contains("after") && timingClean.contains("lunch"))) TIME_AFTER_LUNCH else TIME_AFTERNOON,
                     slot = "Afternoon",
                     withFood = withFood
                 ),
                 ScheduleSlot(
-                    time = if (timingClean.contains("after dinner")) TIME_AFTER_DINNER else TIME_NIGHT,
+                    time = if (timingClean.contains("after dinner") || (timingClean.contains("after") && timingClean.contains("dinner"))) TIME_AFTER_DINNER else TIME_NIGHT,
                     slot = "Night",
                     withFood = withFood
                 )
             )
             isTwiceDaily -> listOf(
                 ScheduleSlot(
-                    time = if (timingClean.contains("after breakfast")) TIME_AFTER_BREAKFAST else TIME_MORNING,
+                    time = if (timingClean.contains("after breakfast") || (timingClean.contains("after") && timingClean.contains("breakfast"))) TIME_AFTER_BREAKFAST else TIME_MORNING,
                     slot = "Morning",
                     withFood = withFood
                 ),
                 ScheduleSlot(
-                    time = if (timingClean.contains("after dinner")) TIME_AFTER_DINNER else TIME_NIGHT,
+                    time = if (timingClean.contains("after dinner") || (timingClean.contains("after") && timingClean.contains("dinner"))) TIME_AFTER_DINNER else TIME_NIGHT,
                     slot = "Night",
                     withFood = withFood
                 )
             )
             isOnceDaily -> {
                 val (slotName, time) = when {
-                    timingClean.contains("bed") || timingClean.contains("night") -> "Night" to TIME_BEDTIME
+                    isHsOnly || timingClean.contains("bed") || timingClean.contains("night") -> "Night" to TIME_BEDTIME
                     timingClean.contains("evening") -> "Evening" to TIME_EVENING
                     timingClean.contains("afternoon") || timingClean.contains("lunch") -> "Afternoon" to TIME_AFTERNOON
                     timingClean.contains("after breakfast") -> "Morning" to TIME_AFTER_BREAKFAST
@@ -191,7 +207,7 @@ object ScheduleEngine {
             if (hasAfternoon) {
                 val time = when {
                     combined.contains("before lunch") -> TIME_BEFORE_LUNCH
-                    combined.contains("after lunch") -> TIME_AFTER_LUNCH
+                    combined.contains("after lunch") || (combined.contains("after") && combined.contains("lunch")) -> TIME_AFTER_LUNCH
                     else -> TIME_AFTERNOON
                 }
                 slots.add(ScheduleSlot(time, "Afternoon", defaultWithFood))
@@ -202,7 +218,7 @@ object ScheduleEngine {
             if (hasNight) {
                 val time = when {
                     combined.contains("before dinner") -> TIME_BEFORE_DINNER
-                    combined.contains("after dinner") -> TIME_AFTER_DINNER
+                    combined.contains("after dinner") || (combined.contains("after") && combined.contains("dinner")) -> TIME_AFTER_DINNER
                     combined.contains("bed") -> TIME_BEDTIME
                     else -> TIME_NIGHT
                 }
@@ -224,7 +240,7 @@ object ScheduleEngine {
             combined.contains("evening") -> ScheduleSlot(TIME_EVENING, "Evening", withFood)
             combined.contains("before dinner") -> ScheduleSlot(TIME_BEFORE_DINNER, "Night", false)
             combined.contains("after dinner") -> ScheduleSlot(TIME_AFTER_DINNER, "Night", true)
-            combined.contains("bed") -> ScheduleSlot(TIME_BEDTIME, "Night", false)
+            combined.contains("hs") || combined.contains("h.s.") || combined.contains("bed") -> ScheduleSlot(TIME_BEDTIME, "Night", false)
             combined.contains("night") -> ScheduleSlot(TIME_NIGHT, "Night", withFood)
             else -> null
         }

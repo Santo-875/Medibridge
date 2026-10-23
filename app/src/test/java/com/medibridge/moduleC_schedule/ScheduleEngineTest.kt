@@ -94,6 +94,32 @@ class ScheduleEngineTest {
     }
 
     @Test
+    fun `test prescription abbreviations OD BD TD HS`() {
+        val odResult = ScheduleEngine.generateSchedule("1 x OD", "After breakfast")
+        assertFalse(odResult.reviewRecommended)
+        assertEquals(1, odResult.slots.size)
+        assertEquals("08:30", odResult.slots[0].time)
+
+        val bdResult = ScheduleEngine.generateSchedule("1 x BD", "After breakfast and dinner")
+        assertFalse(bdResult.reviewRecommended)
+        assertEquals(2, bdResult.slots.size)
+        assertEquals("08:30", bdResult.slots[0].time)
+        assertEquals("20:30", bdResult.slots[1].time)
+
+        val tdResult = ScheduleEngine.generateSchedule("1 x TD", "After breakfast, lunch, and dinner")
+        assertFalse(tdResult.reviewRecommended)
+        assertEquals(3, tdResult.slots.size)
+        assertEquals("08:30", tdResult.slots[0].time)
+        assertEquals("13:30", tdResult.slots[1].time)
+        assertEquals("20:30", tdResult.slots[2].time)
+
+        val hsResult = ScheduleEngine.generateSchedule("1 x HS", "Bedtime")
+        assertFalse(hsResult.reviewRecommended)
+        assertEquals(1, hsResult.slots.size)
+        assertEquals("22:00", hsResult.slots[0].time)
+    }
+
+    @Test
     fun `test ambiguous unknown instruction recommends review and does not invent times`() {
         val result = ScheduleEngine.generateSchedule("Take whenever you feel like", "random directive")
         assertTrue("Ambiguous instructions must recommend review", result.reviewRecommended)

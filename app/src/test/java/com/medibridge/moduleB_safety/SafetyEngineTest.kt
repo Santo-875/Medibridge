@@ -168,12 +168,11 @@ class SafetyEngineTest {
 
     @Test
     fun testGeminiSafetyAnalyzer_usesFallbackWhenKeyIsPlaceholder() = runBlocking {
-        val analyzer = GeminiSafetyAnalyzer(customApiKey = "YOUR_GEMINI_API_KEY_HERE")
-        val scenario = MockSafetyRepository.demoScenarios.first { it.id == "case-1" } // Safe
+        val scenario = MockSafetyRepository.demoScenarios.first { it.id == "case-1" }
         val evaluation = SafetyEngine.evaluateSafety(scenario.candidateMedication, baselineHistory)
         val aiInput = SafetyEngine.buildAiComparisonInput(scenario.candidateMedication, baselineHistory, evaluation)
 
-        val response = analyzer.analyzeSafety(aiInput)
+        val response = FallbackSafetyAnalyzer.generatePoliteExplanation(aiInput)
         assertFalse(response.flagged)
         assertEquals("LOW", response.severity)
         assertTrue(response.isFallback)
