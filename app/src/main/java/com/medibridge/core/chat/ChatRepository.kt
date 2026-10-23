@@ -4,8 +4,8 @@ import android.content.Context
 import android.util.Log
 import com.medibridge.core.db.AppDatabase
 import com.medibridge.core.model.fromEntity
-import com.medibridge.moduleC_schedule.ai.GeminiApiClient
-import com.medibridge.moduleC_schedule.ai.GeminiConfigProvider
+import com.medibridge.core.network.BackendClient
+import com.medibridge.core.network.ChatApiRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -115,9 +115,9 @@ class ChatRepository(private val context: Context) {
         }
 
         try {
-            val backendService = com.medibridge.core.network.BackendClient.getService()
+            val backendService = BackendClient.getService()
             val backendResp = backendService.chatWithAi(
-                com.medibridge.core.network.ChatApiRequest(
+                ChatApiRequest(
                     message = trimmedQuery,
                     patientContext = contextBlock
                 )
@@ -127,53 +127,7 @@ class ChatRepository(private val context: Context) {
                 return@withContext backendResp.reply.trim()
             }
         } catch (backendErr: Exception) {
-            Log.w(TAG, "[CHAT_PATH: BACKEND_AI_FALLBACK] Backend chat failed: ${backendErr.message}, trying direct Gemini", backendErr)
-        }
-
-        val apiKey = GeminiConfigProvider.getApiKey()
-        if (!apiKey.isNullOrBlank() && apiKey != "your_gemini_api_key_here") {
-            try {
-                val prompt = """
-                    You are Medi, an intelligent, empathetic clinical medication and healthcare assistant inside the MediBridge app.
-                    Provide accurate, compassionate, and medically sound guidance to the patient.
-
-                    GUIDELINES:
-                    1. Directly and helpfully answer the patient's question in a clear, friendly, conversational tone.
-                    2. If the patient asks about their medications, schedule, or safety, reference their patient context below.
-                    3. If they ask general medical or healthcare questions (e.g. headaches, fever, diet, sleep, wound care, cold, hydration), explain clearly and concisely with practical advice.
-                    4. If they describe red-flag emergency symptoms (severe chest pain, sudden numbness/paralysis, difficulty breathing, severe bleeding), immediately urge emergency care (call emergency services or visit the nearest ER).
-                    5. Format your response cleanly using markdown (bold headings, bullet points •) for readability on mobile screens. Keep paragraphs crisp and easy to scan.
-
-                    --- VERIFIED PATIENT REGIMEN CONTEXT ---
-                    $contextBlock
-
-                    --- PATIENT QUESTION ---
-                    $trimmedQuery
-                """.trimIndent()
-
-                val request = GeminiApiClient.buildTextRequest(prompt, jsonOutput = false)
-                val response = try {
-                    GeminiApiClient.service.generateContent(
-                        model = "gemini-3.6-flash",
-                        apiKey = apiKey,
-                        request = request
-                    )
-                } catch (e1: Exception) {
-                    GeminiApiClient.service.generateContent(
-                        model = "gemini-3.8-flash",
-                        apiKey = apiKey,
-                        request = request
-                    )
-                }
-
-                val replyText = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
-                if (!replyText.isNullOrBlank()) {
-                    Log.i(TAG, "[CHAT_PATH: GEMINI_DIRECT_SUCCESS] Generated response via direct Gemini")
-                    return@withContext replyText.trim()
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "[CHAT_PATH: GEMINI_DIRECT_FAILED] Direct Gemini call failed: ${e.message}, falling back to local RAG", e)
-            }
+            Log.w(TAG, "[CHAT_PATH: BACKEND_AI_FALLBACK] Backend chat failed: ${backendErr.message}, falling back to local RAG", backendErr)
         }
 
         Log.i(TAG, "[CHAT_PATH: LOCAL_RAG_FALLBACK] Serving local clinical rule response for: $trimmedQuery")
@@ -200,9 +154,9 @@ class ChatRepository(private val context: Context) {
         val historyText = chatHistory.joinToString("\n")
 
         try {
-            val backendService = com.medibridge.core.network.BackendClient.getService()
+            val backendService = BackendClient.getService()
             val backendResp = backendService.chatWithAi(
-                com.medibridge.core.network.ChatApiRequest(
+                ChatApiRequest(
                     message = "Summarize this consultation chat session into 3 clear sections: 1. Discussion Overview, 2. Medication Schedule & Instructions, 3. Precautions & Next Steps.\n\nConversation Transcript:\n$historyText",
                     patientContext = "Medications: ${medications.joinToString { "${it.name} (${it.dose}, ${it.frequency})" }}"
                 )
@@ -210,50 +164,8 @@ class ChatRepository(private val context: Context) {
             if (backendResp.reply.isNotBlank()) {
                 return@withContext "**Consultation Session Summary**:\n\n${backendResp.reply.trim()}"
             }
-        } catch (_: Exception) {}
-
-        val apiKey = GeminiConfigProvider.getApiKey()
-        if (!apiKey.isNullOrBlank() && apiKey != "your_gemini_api_key_here") {
-            try {
-                val prompt = """
-                    You are Medi, the clinical AI assistant for MediBridge.
-                    Summarize this consultation chat session into a structured, patient-friendly summary.
-                    
-                    --- RELEVANT CLINICAL DATA ---
-                    Medications: ${medications.joinToString { "${it.name} (${it.dose}, ${it.frequency})" }}
-                    Safety Flags: ${safetyChecks.filter { it.findingType != "SAFE" }.joinToString { "${it.medicineA}+${it.medicineB}: ${it.result}" }}
-                    
-                    --- CONVERSATION TRANSCRIPT ---
-                    $historyText
-                    
-                    Provide the summary in 3 concise sections with clear bold headers and bullets:
-                    1. **Discussion Overview** (topics reviewed)
-                    2. **Medication Schedule & Instructions** (medicines and timings)
-                    3. **Precautions & Next Steps** (warnings and doctor follow-up)
-                """.trimIndent()
-
-                val request = GeminiApiClient.buildTextRequest(prompt, jsonOutput = false)
-                val response = try {
-                    GeminiApiClient.service.generateContent(
-                        model = "gemini-3.6-flash",
-                        apiKey = apiKey,
-                        request = request
-                    )
-                } catch (e1: Exception) {
-                    GeminiApiClient.service.generateContent(
-                        model = "gemini-3.8-flash",
-                        apiKey = apiKey,
-                        request = request
-                    )
-                }
-
-                val replyText = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
-                if (!replyText.isNullOrBlank()) {
-                    return@withContext "**Consultation Session Summary**:\n\n${replyText.trim()}"
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Gemini summarization failed: ${e.message}, falling back to local summary")
-            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Backend summarization failed: ${e.message}, falling back to local summary", e)
         }
 
         val medSummary = if (medications.isNotEmpty()) {

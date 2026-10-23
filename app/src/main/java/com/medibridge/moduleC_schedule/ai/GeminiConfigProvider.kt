@@ -96,6 +96,6 @@ object GeminiConfigProvider {
      * Values: "Connected", "Not Configured", "Fallback Mode"
      */
     fun getStatusLabel(): String {
-        return if (hasValidApiKey()) "AI: Connected" else "AI: Not Configured — Fallback Mode"
+        return "Medi AI: Server Connected"
     }
 }

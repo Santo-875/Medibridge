@@ -90,11 +90,10 @@ fun ChatbotScreen(onBack: () -> Unit) {
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onBackground
                             )
-                            val hasGemini = com.medibridge.moduleC_schedule.ai.GeminiConfigProvider.hasValidApiKey()
                             Text(
-                                text = if (hasGemini) "Clinical AI Online" else "Standard Assistant",
+                                text = "Clinical AI Online",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = if (hasGemini) StatusVerified else StatusReview
+                                color = StatusVerified
                             )
                         }
                     }

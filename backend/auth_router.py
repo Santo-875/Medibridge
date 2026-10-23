@@ -11,6 +11,7 @@ from auth import (
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+login_rate_limits = {}
 
 class RegisterRequest(BaseModel):
     username: str

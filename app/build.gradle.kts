@@ -37,16 +37,10 @@ android {
                         envApiKey = key
                     }
                 }
-                if (trimmed.startsWith("GEMINI_API_KEY=") && !trimmed.startsWith("#")) {
-                    val key = trimmed.substringAfter("GEMINI_API_KEY=").trim().trim('"', '\'')
-                    if (key.isNotBlank() && key != "your_gemini_api_key_here") {
-                        envGeminiKey = key
-                    }
-                }
             }
         }
         buildConfigField("String", "BACKEND_BASE_URL", "\"$envBackendUrl\"")
-        buildConfigField("String", "GEMINI_API_KEY", "\"$envGeminiKey\"")
+        buildConfigField("String", "GEMINI_API_KEY", "\"\"")
         buildConfigField("String", "API_KEY", "\"$envApiKey\"")
     }
 
