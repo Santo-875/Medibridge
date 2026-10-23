@@ -360,3 +360,102 @@ def test_opd_receipt_fixture_live_llm():
         assert not any(diag in upper for diag in ["DM2", "HTN", "CA BLADDER", "CKD", "GLAUCOMA", "DIAGNOSIS", "REMARKS"])
         assert "DELIVERY" not in upper
         assert upper != "NO"
+
+def test_clinic_rx_general_fixture():
+    from pathlib import Path
+    from prescription_scanning.main import structure_prescription_with_llm
+
+    fixture_path = Path(__file__).parent / "fixtures" / "clinic_rx_general.txt"
+    if not fixture_path.exists():
+        fixture_path = Path("tests/fixtures/clinic_rx_general.txt")
+
+    with open(fixture_path, "r", encoding="utf-8") as f:
+        raw_text = f.read()
+
+    record = structure_prescription_with_llm(raw_text)
+
+    assert len(record.medications) == 4
+    assert len(record.supplies) == 1
+    assert "SWAB" in record.supplies[0].name.upper() or "SYRINGE" in record.supplies[0].name.upper()
+
+    med_names = [m.name for m in record.medications]
+    assert any("Telmisartan" in n for n in med_names)
+    assert any("Metformin" in n for n in med_names)
+    assert any("Omeprazole" in n for n in med_names)
+    assert any("Carboxymethylcellulose" in n for n in med_names)
+
+    for m in record.medications:
+        assert len(m.name.strip()) >= 3
+        upper = m.name.upper()
+        assert not any(diag in upper for diag in ["DIABETES", "HYPERTENSION", "DIAGNOSIS"])
+        assert upper != "NO"
+
+def test_prescription_numeric_dose_fixture():
+    from pathlib import Path
+    from prescription_scanning.main import structure_prescription_with_llm
+
+    fixture_path = Path(__file__).parent / "fixtures" / "prescription_numeric_dose.txt"
+    if not fixture_path.exists():
+        fixture_path = Path("tests/fixtures/prescription_numeric_dose.txt")
+
+    with open(fixture_path, "r", encoding="utf-8") as f:
+        raw_text = f.read()
+
+    record = structure_prescription_with_llm(raw_text)
+
+    assert len(record.medications) == 4
+    assert len(record.supplies) == 1
+    assert "SWAB" in record.supplies[0].name.upper()
+
+    med_names = [m.name for m in record.medications]
+    assert any("Amlodipine" in n for n in med_names)
+    assert any("Atorvastatin" in n for n in med_names)
+    assert any("Pantoprazole" in n for n in med_names)
+    assert any("Paracetamol" in n for n in med_names)
+
+    for m in record.medications:
+        assert len(m.name.strip()) >= 3
+        upper = m.name.upper()
+        assert not any(diag in upper for diag in ["DYSPNEA", "COMPLAINTS"])
+        assert upper != "NO"
+
+def test_pre_llm_validation_rejections():
+    client = TestClient(scan_app)
+
+    blurry_img = create_test_image(sharp=False)
+    with patch.object(presc_module, "extract_prescription_with_gemini") as mock_gemini, \
+         patch.object(presc_module, "extract_prescription_with_groq") as mock_groq:
+        resp_blur = client.post(
+            "/scan",
+            files={"file": ("blurry.jpg", blurry_img, "image/jpeg")}
+        )
+        assert resp_blur.status_code == 422
+        assert "Image too blurry" in resp_blur.json()["detail"]
+        mock_gemini.assert_not_called()
+        mock_groq.assert_not_called()
+
+    small_img = create_test_image(sharp=True, width=150, height=150)
+    with patch.object(presc_module, "extract_prescription_with_gemini") as mock_gemini, \
+         patch.object(presc_module, "extract_prescription_with_groq") as mock_groq:
+        resp_small = client.post(
+            "/scan",
+            files={"file": ("small.jpg", small_img, "image/jpeg")}
+        )
+        assert resp_small.status_code == 422
+        assert "Image resolution too small" in resp_small.json()["detail"]
+        mock_gemini.assert_not_called()
+        mock_groq.assert_not_called()
+
+    sharp_img = create_test_image(sharp=True)
+    with patch.object(presc_module, "ocr") as mock_ocr, \
+         patch.object(presc_module, "extract_prescription_with_gemini") as mock_gemini, \
+         patch.object(presc_module, "extract_prescription_with_groq") as mock_groq:
+        mock_ocr.predict.return_value = []
+        resp_no_text = client.post(
+            "/scan",
+            files={"file": ("empty.jpg", sharp_img, "image/jpeg")}
+        )
+        assert resp_no_text.status_code == 422
+        assert "Could not read any text" in resp_no_text.json()["detail"]
+        mock_gemini.assert_not_called()
+        mock_groq.assert_not_called()

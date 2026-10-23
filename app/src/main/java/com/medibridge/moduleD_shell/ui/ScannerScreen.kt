@@ -98,6 +98,11 @@ sealed class ScannerUiState {
     object Camera : ScannerUiState()
     data class Analyzing(val status: String = "Analyzing prescription or bill...") : ScannerUiState()
     data class Review(val pkg: ScannedPrescriptionPackage) : ScannerUiState()
+    data class CaptureIssue(
+        val headline: String,
+        val tip: String,
+        val technicalDetails: String? = null
+    ) : ScannerUiState()
     data class Error(
         val title: String = "Processing Failed",
         val message: String,
@@ -105,7 +110,7 @@ sealed class ScannerUiState {
     ) : ScannerUiState()
 }
 
-private fun extractDetailedError(e: Throwable): ScannerUiState.Error {
+private fun extractDetailedError(e: Throwable): ScannerUiState {
     Log.e("ScannerScreen", "Detailed scan error caught", e)
 
     if (e is TimeoutCancellationException) {
@@ -161,6 +166,31 @@ private fun extractDetailedError(e: Throwable): ScannerUiState.Error {
             }
             appendLine("\n--- Full Server Response Body ---")
             appendLine(errorBodyStr ?: "(empty response body)")
+        }
+
+        if (code == 422) {
+            val lowerMsg = userMsg.lowercase()
+            if (lowerMsg.contains("could not read any text") || lowerMsg.contains("no medications found")) {
+                return ScannerUiState.CaptureIssue(
+                    headline = "No text detected in this image",
+                    tip = userMsg,
+                    technicalDetails = tech
+                )
+            }
+            if (lowerMsg.contains("blurry")) {
+                return ScannerUiState.CaptureIssue(
+                    headline = "Image Too Blurry",
+                    tip = userMsg,
+                    technicalDetails = tech
+                )
+            }
+            if (lowerMsg.contains("resolution")) {
+                return ScannerUiState.CaptureIssue(
+                    headline = "Image Resolution Too Small",
+                    tip = userMsg,
+                    technicalDetails = tech
+                )
+            }
         }
 
         return ScannerUiState.Error(
@@ -302,7 +332,7 @@ fun ScannerScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = {
-                        if (uiState is ScannerUiState.Review) {
+                        if (uiState is ScannerUiState.Review || uiState is ScannerUiState.CaptureIssue || uiState is ScannerUiState.Error) {
                             uiState = ScannerUiState.Camera
                         } else {
                             onBack()
@@ -564,6 +594,96 @@ fun ScannerScreen(
                         },
                         onRetake = { uiState = ScannerUiState.Camera }
                     )
+                }
+
+                is ScannerUiState.CaptureIssue -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                            .padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
+                            modifier = Modifier.size(80.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.CameraAlt,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(40.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(20.dp))
+                        Text(
+                            text = state.headline,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                            ),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Info,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text(
+                                    text = state.tip,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(28.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Button(
+                                onClick = { uiState = ScannerUiState.Camera },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Retake")
+                            }
+                            OutlinedButton(
+                                onClick = onNavigateToManualEntry,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Enter manually")
+                            }
+                        }
+                    }
                 }
 
                 is ScannerUiState.Error -> {
