@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -32,6 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.medibridge.core.chat.ChatRepository
+import com.medibridge.core.network.ChatCitationDto
 import com.medibridge.core.theme.*
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -62,16 +64,17 @@ fun ChatbotScreen(onBack: () -> Unit) {
             messages.add(ChatMessage(id = UUID.randomUUID().toString(), text = trimmed, isBot = false))
             isBotTyping = true
             scope.launch {
-                val reply = chatRepository.sendMessage(trimmed)
+                val result = chatRepository.sendGroundedMessage(trimmed)
                 isBotTyping = false
-                val isErr = reply.startsWith("⚠️")
                 messages.add(
                     ChatMessage(
                         id = UUID.randomUUID().toString(),
-                        text = reply,
+                        text = result.reply,
                         isBot = true,
-                        isError = isErr,
-                        retryQuery = if (isErr) trimmed else null
+                        isError = result.isError,
+                        retryQuery = if (result.isError) trimmed else null,
+                        citations = result.citations,
+                        safetyDisclaimer = result.safetyDisclaimer
                     )
                 )
             }
@@ -306,7 +309,9 @@ data class ChatMessage(
     val text: String,
     val isBot: Boolean,
     val isError: Boolean = false,
-    val retryQuery: String? = null
+    val retryQuery: String? = null,
+    val citations: List<ChatCitationDto> = emptyList(),
+    val safetyDisclaimer: String? = null
 )
 
 @Composable
@@ -367,7 +372,6 @@ private fun ChatBubble(message: ChatMessage, onRetry: ((String) -> Unit)? = null
                     Column(
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)
                     ) {
-                        // Header bar inside bot bubble
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
@@ -412,6 +416,16 @@ private fun ChatBubble(message: ChatMessage, onRetry: ((String) -> Unit)? = null
                         )
 
                         StructuredBotResponse(text = message.text)
+
+                        if (message.citations.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            SourceCitationsSection(citations = message.citations)
+                        }
+
+                        if (!message.isError && message.id != "init") {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            ClinicalGuardrailBadge(disclaimer = message.safetyDisclaimer)
+                        }
 
                         if (message.isError && message.retryQuery != null) {
                             Spacer(modifier = Modifier.height(10.dp))
@@ -699,6 +713,174 @@ private fun QuickSuggestions(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun SourceCitationsSection(citations: List<ChatCitationDto>) {
+    var expanded by remember { mutableStateOf(true) }
+
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.MenuBook,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Text(
+                        text = "Source Citations & Footnotes (${citations.size})",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                IconButton(
+                    onClick = { expanded = !expanded },
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = "Toggle citations",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+
+            AnimatedVisibility(visible = expanded) {
+                Column(
+                    modifier = Modifier.padding(top = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    citations.forEach { citation ->
+                        val (chipBg, chipTextColor, badgeText) = when (citation.category) {
+                            "PATIENT_RECORD" -> Triple(
+                                MaterialTheme.colorScheme.primaryContainer,
+                                MaterialTheme.colorScheme.onPrimaryContainer,
+                                "Verified Regimen"
+                            )
+                            "SAFETY_ALERT" -> Triple(
+                                MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.8f),
+                                MaterialTheme.colorScheme.onErrorContainer,
+                                "Safety Finding"
+                            )
+                            else -> Triple(
+                                MaterialTheme.colorScheme.secondaryContainer,
+                                MaterialTheme.colorScheme.onSecondaryContainer,
+                                "CDSCO / NFI Compendium"
+                            )
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surface,
+                            border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(8.dp),
+                                verticalAlignment = Alignment.Top,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = chipBg,
+                                    modifier = Modifier.padding(top = 1.dp)
+                                ) {
+                                    Text(
+                                        text = "[${citation.id}]",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = chipTextColor,
+                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+                                        fontSize = 10.sp
+                                    )
+                                }
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text(
+                                            text = citation.title,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Surface(
+                                            shape = RoundedCornerShape(3.dp),
+                                            color = chipBg.copy(alpha = 0.35f)
+                                        ) {
+                                            Text(
+                                                text = badgeText,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontSize = 9.sp,
+                                                color = chipTextColor,
+                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                            )
+                                        }
+                                    }
+                                    if (citation.source.isNotBlank()) {
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = citation.source,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ClinicalGuardrailBadge(disclaimer: String?) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Shield,
+                contentDescription = null,
+                tint = StatusVerified,
+                modifier = Modifier.size(13.dp)
+            )
+            Text(
+                text = disclaimer ?: "Medical AI guidance for reference. Always confirm treatment decisions with your prescribing physician.",
+                style = MaterialTheme.typography.labelSmall,
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 13.sp
+            )
         }
     }
 }

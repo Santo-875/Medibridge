@@ -205,9 +205,18 @@ data class ChatApiRequest(
     @SerializedName("patient_context") val patientContext: String? = null
 )
 
+data class ChatCitationDto(
+    val id: Int = 0,
+    val title: String = "",
+    val source: String = "",
+    val category: String = "CLINICAL_COMPENDIUM"
+)
+
 data class ChatApiResponse(
-    val reply: String,
-    val source: String? = null
+    val reply: String = "",
+    val source: String? = null,
+    val citations: List<ChatCitationDto> = emptyList(),
+    @SerializedName("safety_disclaimer") val safetyDisclaimer: String? = null
 )
 
 data class BackendSafetyRequest(

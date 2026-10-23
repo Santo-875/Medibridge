@@ -6,19 +6,19 @@ import com.medibridge.core.db.AppDatabase
 import com.medibridge.core.model.fromEntity
 import com.medibridge.core.network.BackendClient
 import com.medibridge.core.network.ChatApiRequest
+import com.medibridge.core.network.ChatCitationDto
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
-/**
- * ChatRepository — RAG chatbot engine for MediBridge (Module D).
- *
- * On each message:
- * 1. Queries local Room DB (medications, safety history, patient summaries).
- * 2. Matches keywords and builds a grounded clinical context block.
- * 3. Calls Gemini API using the GeminiApiClient pattern.
- * 4. Gracefully falls back to structured offline clinical reasoning if Gemini is unavailable.
- */
+data class ChatResponseResult(
+    val reply: String,
+    val source: String? = null,
+    val citations: List<ChatCitationDto> = emptyList(),
+    val safetyDisclaimer: String? = null,
+    val isError: Boolean = false
+)
+
 class ChatRepository(private val context: Context) {
 
     private val db = AppDatabase.getInstance(context)
@@ -30,9 +30,15 @@ class ChatRepository(private val context: Context) {
         private const val TAG = "ChatRepository"
     }
 
-    suspend fun sendMessage(query: String): String = withContext(Dispatchers.IO) {
+    suspend fun sendMessage(query: String): String = sendGroundedMessage(query).reply
+
+    suspend fun sendGroundedMessage(query: String): ChatResponseResult = withContext(Dispatchers.IO) {
         val trimmedQuery = query.trim()
-        if (trimmedQuery.isEmpty()) return@withContext "Please ask a question about your medications or schedule."
+        if (trimmedQuery.isEmpty()) {
+            return@withContext ChatResponseResult(
+                reply = "Please ask a question about your medications or schedule."
+            )
+        }
 
         // 1. Retrieve all patient context from Room DB
         val medications = try {
@@ -124,14 +130,26 @@ class ChatRepository(private val context: Context) {
             )
             if (backendResp.reply.isNotBlank()) {
                 Log.i(TAG, "[CHAT_PATH: BACKEND_AI_SUCCESS] Sourced via ${backendResp.source}")
-                return@withContext backendResp.reply.trim()
+                return@withContext ChatResponseResult(
+                    reply = backendResp.reply.trim(),
+                    source = backendResp.source,
+                    citations = backendResp.citations,
+                    safetyDisclaimer = backendResp.safetyDisclaimer,
+                    isError = false
+                )
             } else {
-                return@withContext "I received an empty response from Medi AI. Please try rephrasing your question."
+                return@withContext ChatResponseResult(
+                    reply = "I received an empty response from Medi AI. Please try rephrasing your question.",
+                    isError = true
+                )
             }
         } catch (backendErr: Exception) {
             Log.e(TAG, "[CHAT_PATH: BACKEND_AI_ERROR] Backend chat failed: ${backendErr.message}", backendErr)
             val activeUrl = BackendClient.getBaseUrl()
-            return@withContext "⚠️ Unable to connect to Medi AI server (${backendErr.localizedMessage ?: backendErr.message ?: "Connection error"}).\n\nActive Server URL: $activeUrl\n\nPlease verify that your server/ngrok tunnel is running or update the URL in Settings."
+            return@withContext ChatResponseResult(
+                reply = "⚠️ Unable to connect to Medi AI server (${backendErr.localizedMessage ?: backendErr.message ?: "Connection error"}).\n\nActive Server URL: $activeUrl\n\nPlease verify that your server/ngrok tunnel is running or update the URL in Settings.",
+                isError = true
+            )
         }
     }
 

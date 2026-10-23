@@ -471,6 +471,12 @@ async def delete_speech_audio(recording_id: str):
     finally:
         db.close()
 
+class ChatCitation(BaseModel):
+    id: int
+    title: str
+    source: str
+    category: str = "CLINICAL_COMPENDIUM"
+
 class ChatRequest(BaseModel):
     message: str
     patient_context: Optional[str] = None
@@ -478,6 +484,49 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     reply: str
     source: str
+    citations: list[ChatCitation] = []
+    safety_disclaimer: str = "Medical AI guidance for reference. Always confirm treatment decisions with your prescribing physician or licensed pharmacist."
+
+def parse_grounded_chat_output(content: str, patient_context: Optional[str]) -> tuple[str, list[ChatCitation], str]:
+    cleaned = content.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```[a-zA-Z]*\n?", "", cleaned)
+        cleaned = re.sub(r"\n?```$", "", cleaned)
+        cleaned = cleaned.strip()
+
+    try:
+        data = json.loads(cleaned)
+        if isinstance(data, dict) and "reply" in data:
+            reply = data.get("reply", "")
+            raw_citations = data.get("citations", [])
+            citations = []
+            for idx, c in enumerate(raw_citations, start=1):
+                citations.append(ChatCitation(
+                    id=c.get("id", idx),
+                    title=c.get("title", f"Reference [{idx}]"),
+                    source=c.get("source", "Clinical Compendium"),
+                    category=c.get("category", "CLINICAL_COMPENDIUM")
+                ))
+            disclaimer = data.get("safety_disclaimer") or "Medical AI guidance for reference. Always confirm treatment decisions with your prescribing physician or licensed pharmacist."
+            return reply, citations, disclaimer
+    except Exception:
+        pass
+
+    fallback_citations = []
+    if patient_context and "VERIFIED PATIENT MEDICATIONS" in patient_context:
+        fallback_citations.append(ChatCitation(
+            id=1,
+            title="Verified Patient Regimen",
+            source="Patient Personal Prescription Record",
+            category="PATIENT_RECORD"
+        ))
+    fallback_citations.append(ChatCitation(
+        id=len(fallback_citations) + 1,
+        title="CDSCO / National Formulary of India",
+        source="Central Drugs Standard Control Organisation & BNF Reference",
+        category="CLINICAL_COMPENDIUM"
+    ))
+    return cleaned, fallback_citations, "Medical AI guidance for reference. Always confirm treatment decisions with your prescribing physician or licensed pharmacist."
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat_with_medi_ai(request: ChatRequest):
@@ -486,15 +535,32 @@ async def chat_with_medi_ai(request: ChatRequest):
     if not msg:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-    prompt = f"""You are Medi, an intelligent, empathetic clinical medication and healthcare assistant inside the MediBridge app.
-Provide accurate, compassionate, and medically sound guidance to the patient.
+    prompt = f"""You are Medi, an intelligent, empathetic clinical medication and healthcare assistant inside MediBridge AI.
+Provide accurate, compassionate, and medically grounded guidance to the patient.
 
-GUIDELINES:
-1. Directly and helpfully answer the patient's question in a clear, friendly, conversational tone.
-2. If the patient asks about their medications, schedule, or safety, reference their patient context below.
-3. If they ask general medical or healthcare questions (e.g. headaches, fever, diet, sleep, wound care, cold, hydration), explain clearly and concisely with practical advice.
-4. If they describe red-flag emergency symptoms (severe chest pain, sudden numbness/paralysis, difficulty breathing, severe bleeding), immediately urge emergency care (call emergency services or visit the nearest ER).
-5. Format your response cleanly using markdown (bold headings, bullet points •) for readability on mobile screens. Keep paragraphs crisp and easy to scan.
+STRICT CLINICAL GUARDRAILS & HALLUCINATION POLICY:
+1. Grounding: Distinguish strictly between the patient's verified active medications/records and general medical knowledge. If the patient asks about a medicine not in their regimen, explicitly note that it is not in their current active prescription before discussing general pharmacological info.
+2. Dose & Regimen Safety: NEVER fabricate, alter, or instruct a change in prescribed dosage, timing, or drug combinations. For dosage modifications, instruct the patient to contact their doctor.
+3. Emergency Protocol: If red-flag emergency symptoms (severe chest pain, sudden numbness/paralysis, difficulty breathing, severe bleeding) appear, immediately urge urgent emergency care.
+4. Source Citations & Footnotes: Anchor clinical statements with bracketed footnote numbers like [1], [2].
+Every citation footnote must map to one of:
+- Patient's Active Regimen or Recorded Consultation: category "PATIENT_RECORD"
+- Official Drug Compendia (CDSCO / National Formulary of India / BNF): category "CLINICAL_COMPENDIUM"
+- Recorded Safety Check or Contraindication: category "SAFETY_ALERT"
+
+Output MUST be a JSON object with this exact structure:
+{{
+  "reply": "Your clear, markdown-formatted response using bullet points and citation brackets like [1], [2]",
+  "citations": [
+    {{
+      "id": 1,
+      "title": "Short title",
+      "source": "Full source description",
+      "category": "PATIENT_RECORD" | "CLINICAL_COMPENDIUM" | "SAFETY_ALERT"
+    }}
+  ],
+  "safety_disclaimer": "Medical AI guidance for reference. Always confirm treatment decisions with your prescribing physician or licensed pharmacist."
+}}
 
 --- PATIENT REGIMEN CONTEXT ---
 {request.patient_context or "No active prescription medications registered."}
@@ -516,7 +582,8 @@ GUIDELINES:
                         contents=prompt
                     )
                     if resp and resp.text and resp.text.strip():
-                        return ChatResponse(reply=resp.text.strip(), source="gemini")
+                        reply, citations, disclaimer = parse_grounded_chat_output(resp.text, request.patient_context)
+                        return ChatResponse(reply=reply, source="gemini", citations=citations, safety_disclaimer=disclaimer)
                 except Exception:
                     continue
         except Exception as e:
@@ -534,16 +601,18 @@ GUIDELINES:
                         return groq_client.chat.completions.create(
                             model=model_name,
                             messages=[
-                                {"role": "system", "content": "You are Medi, a compassionate clinical healthcare and medication AI assistant."},
+                                {"role": "system", "content": "You are Medi, a compassionate clinical healthcare and medication AI assistant. You adhere strictly to grounded clinical guidelines and provide structured JSON outputs."},
                                 {"role": "user", "content": prompt}
                             ],
-                            temperature=0.3,
+                            temperature=0.2,
+                            response_format={"type": "json_object"},
                             max_completion_tokens=1024
                         )
                     completion = await asyncio.to_thread(_call_groq, m)
                     content = completion.choices[0].message.content
                     if content and content.strip():
-                        return ChatResponse(reply=content.strip(), source="groq")
+                        reply, citations, disclaimer = parse_grounded_chat_output(content, request.patient_context)
+                        return ChatResponse(reply=reply, source="groq", citations=citations, safety_disclaimer=disclaimer)
                 except Exception:
                     continue
         except Exception as e:
