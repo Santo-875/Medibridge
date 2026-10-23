@@ -26,19 +26,38 @@ app = FastAPI()
 
 class ValidationInfo(BaseModel):
     rxcui: Optional[str] = None
-    status: Literal["HIGH", "NEEDS_VERIFICATION", "UNVERIFIED"]
+    status: str = "UNVERIFIED"
     reason: Optional[str] = None
 
 class MedicationItem(BaseModel):
     medicine: str
+    name: Optional[str] = None
+    generic_name: Optional[str] = None
     normalized_name: Optional[str] = None
+    strength: Optional[str] = None
+    form: Optional[str] = None
+    dose_per_intake: Optional[str] = None
     dosage: Optional[str] = None
+    frequency: Optional[str] = None
     instruction: Optional[str] = None
+    timing: Optional[str] = None
     duration_days: Optional[int] = None
+    quantity: Optional[str] = None
     pqt: Optional[str] = None
     iqt: Optional[str] = None
     balance: Optional[str] = None
+    is_medicine: bool = True
+    category: Optional[str] = "medicine"
+    confidence: float = 1.0
+    source_line: Optional[str] = None
+    verification_status: Optional[str] = "UNVERIFIED"
     validation: ValidationInfo
+
+class SupplyItem(BaseModel):
+    name: str
+    category: str = "supply"
+    quantity: Optional[str] = None
+    source_line: Optional[str] = None
 
 class PatientInfo(BaseModel):
     name: Optional[str] = None
@@ -56,10 +75,31 @@ class PrescriptionInfo(BaseModel):
     delivery_type: Optional[str] = None
     token_no: Optional[str] = None
 
+class MedicationExtractionItem(BaseModel):
+    name: str
+    generic_name: Optional[str] = None
+    strength: Optional[str] = None
+    form: Optional[str] = None
+    dose_per_intake: Optional[str] = None
+    frequency: Optional[str] = None
+    timing: Optional[str] = None
+    duration_days: Optional[int] = None
+    quantity: Optional[str] = None
+    is_medicine: bool = True
+    category: Optional[str] = "medicine"
+    confidence: float = 1.0
+    source_line: Optional[str] = None
+
+class RawLLMExtraction(BaseModel):
+    patient: Optional[PatientInfo] = None
+    prescription: Optional[PrescriptionInfo] = None
+    medications: List[MedicationExtractionItem] = []
+
 class PrescriptionRecord(BaseModel):
     patient: PatientInfo
     prescription: PrescriptionInfo
     medications: List[MedicationItem]
+    supplies: List[SupplyItem] = []
 
 
 try:
@@ -236,22 +276,32 @@ def extract_medicine_section(raw_text):
     medicine_lines = []
     inside = False
 
+    stop_keywords = [
+        "DIAGNOSIS", "DIAGNOSES", "IMPRESSION", "REMARKS", "CLINICAL NOTES",
+        "CHIEF COMPLAINTS", "CA BLADDER", "CKD", "SIGNATURE", "PRESCRIBED BY",
+        "DELIVERY", "DISPENSED", "TOTAL", "GRAND TOTAL", "AMOUNT", "DATE:",
+        "TIME:", "VISIT AGAIN", "FOLLOW UP", "ADVICE", "INSTRUCTIONS"
+    ]
+
     for line in lines:
         line = line.strip()
         if not line:
             continue
         upper = line.upper()
 
-        if any(term in upper for term in ["PRESCRIBED", "MEDICINE", "MEDICINES", "HSDICIKE", "MEDLZLNK", "NOMENCLATURE"]):
-            inside = True
-            continue
-
         if inside:
+            if any(term in upper for term in stop_keywords):
+                break
             if upper.startswith("NOMENCLATURE"):
                 continue
             medicine_lines.append(line)
-        elif any(k in upper for k in ["TAB", "CAP", "MG", "MCG", "DROPS", "SYRUP", "AFTER", "BEFORE"]):
-            medicine_lines.append(line)
+        else:
+            if any(term in upper for term in ["PRESCRIBED", "MEDICINE", "MEDICINES", "NOMENCLATURE"]):
+                inside = True
+                continue
+            if any(k in upper for k in ["TAB", "CAP", "MG", "MCG", "DROPS", "SYRUP", "AFTER", "BEFORE"]):
+                if not any(term in upper for term in stop_keywords):
+                    medicine_lines.append(line)
 
     return medicine_lines
 
@@ -501,34 +551,28 @@ async def upload_prescription(file: UploadFile = File(...)):
             detail="Could not read any text from this image. Try better lighting or a flatter angle."
         )
 
-    medicine_lines = extract_medicine_section(raw_text)
-    medicine_blocks = reconstruct_medicine_blocks(medicine_lines)
-    medicine_blocks = merge_medicine_blocks(medicine_blocks)
+    _, encoded_jpg = cv2.imencode(".jpg", ocr_image)
+    ocr_image_bytes = encoded_jpg.tobytes()
 
-    validated_medicines = []
-    for block in medicine_blocks:
-        parsed = parse_medicine_block(block)
-        parsed["medicine"] = normalize_medicine_text(parsed["medicine"])
-        parsed["validation"] = validate_medicine(parsed["medicine"])
-        validated_medicines.append(parsed)
+    try:
+        record = await asyncio.to_thread(structure_prescription_with_llm, raw_text, None, ocr_image_bytes)
+    except HTTPException:
+        raise
+    except Exception as e:
+        med_lines = extract_medicine_section(raw_text)
+        blocks = reconstruct_medicine_blocks(med_lines)
+        validated = [validate_medicine(b) for b in blocks] if blocks else []
+        logging.error(f"AI structuring error: {e}")
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "message": f"AI structuring failed: {e}",
+                "raw_text": raw_text,
+                "validated_medicines": validated
+            }
+        )
 
-    prescription_record = None
-    if os.environ.get("GROQ_API_KEY"):
-        try:
-            record = await asyncio.to_thread(structure_prescription_with_llm, raw_text, validated_medicines)
-            prescription_record = record.model_dump()
-        except Exception as e:
-            logging.error(f"Groq structuring error: {e}")
-            raise HTTPException(
-                status_code=502,
-                detail={
-                    "message": f"Groq structuring failed: {e}",
-                    "raw_text": raw_text,
-                    "validated_medicines": validated_medicines
-                }
-            )
-
-    if prescription_record is not None and not prescription_record.get("medications"):
+    if not record.medications and not record.supplies:
         preview = (raw_text[:120] + "...") if len(raw_text) > 120 else raw_text
         raise HTTPException(
             status_code=422,
@@ -544,68 +588,108 @@ async def upload_prescription(file: UploadFile = File(...)):
         "content_type": file.content_type,
         "size": len(data),
         "raw_text": raw_text,
-        "medicine_blocks": medicine_blocks,
-        "validated_medicines": validated_medicines,
-        "prescription_record": prescription_record
+        "medications": [m.model_dump() for m in record.medications],
+        "supplies": [s.model_dump() for s in record.supplies],
+        "patient": record.patient.model_dump() if record.patient else {},
+        "prescription": record.prescription.model_dump() if record.prescription else {},
+        "warnings": [],
+        "prescription_record": record.model_dump()
     }
 
+EXTRACTION_SYSTEM_PROMPT = """Extract the patient info, prescription details, prescribed medications, and medical supplies from this prescription receipt or doctor's order.
+Only genuine medications should have is_medicine=true and category="medicine".
+Diagnoses (such as CA BLADDER, CKD, GLAUCOMA), medical conditions, clinic names, doctor names, delivery instructions, remarks, and OCR noise (such as 'NO', 'SL NO', table headers) are NOT medicines.
+Medical supplies (such as needles, syringes, lancets, test strips, gauze, cotton) must have is_medicine=false and category="supply".
+Do not invent dosage, frequency, or duration if not printed; leave them null.
+Fix obvious OCR typos in medicine names (e.g. A2CR9ARAZiN -> Atorvastatin, SODEUX BICA3S0KAIE -> Sodium Bicarbonate).
+Normalise abbreviations (OD, BD, TDS, TID, QID, HS, SOS, AC, PC).
+Return a JSON object matching the requested schema."""
 
-def structure_prescription_with_llm(raw_text: str, validated_medicines: list) -> PrescriptionRecord:
+def extract_prescription_with_gemini(image_bytes: bytes, raw_text: str) -> RawLLMExtraction:
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key or api_key == "your_gemini_api_key_here":
+        raise ValueError("GEMINI_API_KEY is not configured")
+
+    from google import genai
+    from google.genai import types
+
+    client = genai.Client(api_key=api_key)
+    model_name = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
+
+    prompt = f"""{EXTRACTION_SYSTEM_PROMPT}
+
+OCR RAW TEXT:
+{raw_text}
+"""
+    contents = [
+        types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
+        prompt
+    ]
+    config = types.GenerateContentConfig(
+        response_mime_type="application/json",
+        response_schema=RawLLMExtraction,
+        temperature=0.0
+    )
+
+    models_to_try = [model_name]
+    for alt in ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-2.5-flash"]:
+        if alt not in models_to_try:
+            models_to_try.append(alt)
+
+    last_err = None
+    for m in models_to_try:
+        try:
+            resp = client.models.generate_content(
+                model=m,
+                contents=contents,
+                config=config
+            )
+            if resp and resp.text:
+                return RawLLMExtraction.model_validate_json(resp.text)
+        except Exception as e:
+            last_err = e
+            continue
+
+    raise last_err or Exception("Gemini extraction failed")
+
+def extract_prescription_with_groq(raw_text: str) -> RawLLMExtraction:
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
-        raise HTTPException(
-            status_code=500,
-            detail="GROQ_API_KEY is not set. Please add it to your .env file."
-        )
+        raise ValueError("GROQ_API_KEY is not set")
 
     client = Groq(api_key=api_key)
     model_name = os.environ.get("GROQ_MODEL", "openai/gpt-oss-20b")
 
-    prompt = f"""Extract the patient, prescription header, and prescribed medications from this prescription receipt text.
-Correct obvious OCR typos for medicines (for example: A2CR9ARAZiN -> Atorvastatin, SODEUX BICA3S0KAIE -> Sodium Bicarbonate).
-Return ONLY valid JSON matching this schema:
+    prompt = f"""{EXTRACTION_SYSTEM_PROMPT}
+
+Return a valid JSON object matching this schema:
 {{
-  "patient": {{
-    "name": string or null,
-    "age": integer or null,
-    "relation": string or null,
-    "mobile": string or null,
-    "service_no": string or null,
-    "card_no": string or null
-  }},
-  "prescription": {{
-    "date": string (YYYY-MM-DD) or null,
-    "time": string (HH:MM:SS) or null,
-    "prescribed_by": string or null,
-    "remarks": string or null,
-    "delivery_type": string or null,
-    "token_no": string or null
-  }},
+  "patient": {{"name": null, "age": null, "relation": null, "mobile": null}},
+  "prescription": {{"date": null, "time": null, "prescribed_by": null, "remarks": null, "delivery_type": null, "token_no": null}},
   "medications": [
     {{
-      "medicine": "Atorvastatin 10mg",
-      "normalized_name": "Atorvastatin",
-      "dosage": "10mg",
-      "instruction": "1 tablet at bedtime",
-      "duration_days": 30,
-      "pqt": "30",
-      "iqt": "30",
-      "balance": "0",
-      "validation": {{"status": "HIGH", "rxcui": null, "reason": "Extracted and verified"}}
+      "name": "Medication Name",
+      "generic_name": null,
+      "strength": null,
+      "form": "tablet|capsule|syrup|drops|injection|other",
+      "dose_per_intake": null,
+      "frequency": "OD|BD|TDS|QID|HS|SOS|other",
+      "timing": "Before food|After food|Bedtime",
+      "duration_days": null,
+      "quantity": null,
+      "is_medicine": true,
+      "category": "medicine",
+      "confidence": 1.0,
+      "source_line": null
     }}
   ]
 }}
 
-CRITICAL EXTRACTION RULES:
-- "remarks": Extract ONLY real clinical diagnosis or specific doctor instructions present in the text. If none is explicitly stated, return null. Never copy example text.
-- "delivery_type": Extract the method of delivery if present, else null.
-
-RECEIPT TEXT:
+OCR RAW TEXT:
 {raw_text}
 """
-
     models_to_try = [model_name]
-    for alt in ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"]:
+    for alt in ["openai/gpt-oss-20b", "qwen/qwen3.8-27b", "openai/gpt-oss-120b"]:
         if alt not in models_to_try:
             models_to_try.append(alt)
 
@@ -623,83 +707,172 @@ RECEIPT TEXT:
                 max_completion_tokens=4096,
                 temperature=0.0
             )
-            break
+            if response and response.choices and response.choices[0].message.content:
+                data = json.loads(response.choices[0].message.content)
+                return RawLLMExtraction.model_validate(data)
         except Exception as e:
             last_err = e
 
-    if response is None:
-        raise last_err or Exception("All Groq models failed to structure prescription JSON")
+    raise last_err or Exception("All Groq models failed to structure prescription JSON")
 
-    header_data = json.loads(response.choices[0].message.content)
+def process_raw_extraction(raw_data: RawLLMExtraction) -> PrescriptionRecord:
+    supplies: List[SupplyItem] = []
+    med_candidates: List[MedicationExtractionItem] = []
 
-    # Post-clean remarks if the LLM still trailed with "Delivery"
-    presc_dict = header_data.get("prescription", {})
-    if presc_dict.get("remarks"):
-        presc_dict["remarks"] = re.sub(r"\s+Delivery\s*$", "", presc_dict["remarks"], flags=re.IGNORECASE).strip()
+    supply_keywords = ["NEEDLE", "NEEDLES", "SYRINGE", "SYRINGES", "LANCET", "STRIP", "STRIPS", "DRESSING", "GAUZE", "COTTON", "BANDAGE", "CATHETER"]
+    diagnosis_keywords = ["CA BLADDER", "CKD", "GLAUCOMA", "CARCINOMA", "DIAGNOSIS", "DIAGNOSES"]
+    noise_keywords = ["NO", "YES", "NA", "N/A", "NIL", "NONE", "SL NO", "ITEM", "TOTAL", "DELIVERY"]
 
-    # Build validated medication items deterministically
-    medication_items = []
-    if validated_medicines:
-        for m in validated_medicines:
-            raw_med = m.get("medicine", "")
-            val = m.get("validation", {})
-            val_status = val.get("confidence", "UNVERIFIED")
-            matched_name = val.get("matched_name")
+    for item in raw_data.medications:
+        name = (item.name or "").strip()
+        if not name or len(name) < 3:
+            continue
 
-            if matched_name and val_status in ["HIGH", "NEEDS_VERIFICATION"]:
-                norm_name = matched_name
-            else:
-                norm_name = None
+        upper_name = name.upper()
+        if upper_name in noise_keywords:
+            continue
 
-            duration_val = m.get("day")
-            try:
-                duration_days = int(duration_val) if duration_val and str(duration_val).isdigit() else None
-            except Exception:
-                duration_days = None
+        if any(diag in upper_name for diag in diagnosis_keywords):
+            continue
 
-            medication_items.append(MedicationItem(
-                medicine=raw_med,
-                normalized_name=norm_name,
-                dosage=m.get("dosage"),
-                instruction=m.get("instruction"),
-                duration_days=duration_days,
-                pqt=str(m.get("pqt")) if m.get("pqt") is not None else None,
-                iqt=str(m.get("iqt")) if m.get("iqt") is not None else None,
-                balance=str(m.get("bal")) if m.get("bal") is not None else None,
-                validation=ValidationInfo(
-                    rxcui=val.get("rxcui"),
-                    status=val_status,
-                    reason=val.get("flag_reason")
-                )
+        is_supply = (
+            item.is_medicine is False
+            or (item.category and item.category.lower() == "supply")
+            or any(s in upper_name for s in supply_keywords)
+        )
+
+        if is_supply:
+            supplies.append(SupplyItem(
+                name=name,
+                category="supply",
+                quantity=item.quantity or item.dose_per_intake,
+                source_line=item.source_line
             ))
+            continue
 
-    # If regex blocks found nothing, use the rich LLM-extracted medications
-    if not medication_items and header_data.get("medications"):
-        for med_dict in header_data["medications"]:
-            val_dict = med_dict.get("validation", {}) or {}
-            raw_status = val_dict.get("status")
-            status = raw_status if raw_status in ["HIGH", "NEEDS_VERIFICATION", "UNVERIFIED"] else "HIGH"
-            medication_items.append(MedicationItem(
-                medicine=med_dict.get("medicine") or "Prescribed Medicine",
-                normalized_name=med_dict.get("normalized_name") or med_dict.get("medicine"),
-                dosage=med_dict.get("dosage") or "1 dose",
-                instruction=med_dict.get("instruction") or "As prescribed",
-                duration_days=med_dict.get("duration_days") or 30,
-                pqt=str(med_dict.get("pqt")) if med_dict.get("pqt") is not None else None,
-                iqt=str(med_dict.get("iqt")) if med_dict.get("iqt") is not None else None,
-                balance=str(med_dict.get("balance")) if med_dict.get("balance") is not None else None,
-                validation=ValidationInfo(
-                    rxcui=val_dict.get("rxcui"),
-                    status=status,
-                    reason=val_dict.get("reason") or "Extracted by clinical LLM"
-                )
-            ))
+        if item.confidence < 0.4:
+            continue
 
-    patient_obj = PatientInfo.model_validate(header_data.get("patient", {}))
-    prescription_obj = PrescriptionInfo.model_validate(header_data.get("prescription", {}))
+        med_candidates.append(item)
+
+    def _verify_single(m: MedicationExtractionItem) -> MedicationItem:
+        search_term = m.generic_name or m.name
+        val_res = validate_medicine(search_term)
+        is_verified = val_res.get("confidence") == "HIGH"
+        verification_status = "VERIFIED" if is_verified else "UNVERIFIED"
+
+        validation_obj = ValidationInfo(
+            rxcui=val_res.get("rxcui"),
+            status=verification_status,
+            reason=val_res.get("flag_reason") or ("RxNorm verified" if is_verified else "Unverified")
+        )
+
+        norm_name = val_res.get("matched_name") if is_verified else m.name
+        dosage_val = m.dose_per_intake or m.strength
+        instruction_val = m.timing or m.frequency
+
+        return MedicationItem(
+            medicine=m.name,
+            name=m.name,
+            generic_name=m.generic_name,
+            normalized_name=norm_name,
+            strength=m.strength,
+            form=m.form,
+            dose_per_intake=m.dose_per_intake,
+            dosage=dosage_val,
+            frequency=m.frequency,
+            instruction=instruction_val,
+            timing=m.timing,
+            duration_days=m.duration_days,
+            quantity=m.quantity,
+            pqt=m.quantity,
+            iqt=m.quantity,
+            balance=None,
+            is_medicine=True,
+            category="medicine",
+            confidence=m.confidence,
+            source_line=m.source_line,
+            verification_status=verification_status,
+            validation=validation_obj
+        )
+
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        medication_items = list(executor.map(_verify_single, med_candidates))
+
+    patient_obj = raw_data.patient or PatientInfo()
+    prescription_obj = raw_data.prescription or PrescriptionInfo()
+
+    if prescription_obj.remarks:
+        prescription_obj.remarks = re.sub(r"\s+Delivery\s*$", "", prescription_obj.remarks, flags=re.IGNORECASE).strip()
 
     return PrescriptionRecord(
         patient=patient_obj,
         prescription=prescription_obj,
-        medications=medication_items
+        medications=medication_items,
+        supplies=supplies
+    )
+
+def structure_prescription_with_llm(
+    raw_text: str,
+    validated_medicines: list = None,
+    image_bytes: bytes = None
+) -> PrescriptionRecord:
+    raw_extraction: Optional[RawLLMExtraction] = None
+    extraction_err = None
+
+    if image_bytes and os.environ.get("GEMINI_API_KEY"):
+        try:
+            raw_extraction = extract_prescription_with_gemini(image_bytes, raw_text)
+        except Exception as e:
+            extraction_err = e
+
+    if raw_extraction is None and os.environ.get("GROQ_API_KEY"):
+        try:
+            raw_extraction = extract_prescription_with_groq(raw_text)
+        except Exception as e:
+            extraction_err = e
+
+    if raw_extraction is not None:
+        return process_raw_extraction(raw_extraction)
+
+    if validated_medicines:
+        items = []
+        for m in validated_medicines:
+            raw_med = m.get("medicine", "").strip()
+            if not raw_med or len(raw_med) < 3 or raw_med.upper() in ["NO", "NA"]:
+                continue
+            val = m.get("validation", {})
+            status = "VERIFIED" if val.get("confidence") == "HIGH" else "UNVERIFIED"
+            items.append(MedicationItem(
+                medicine=raw_med,
+                name=raw_med,
+                dosage=m.get("dosage"),
+                instruction=m.get("instruction"),
+                duration_days=int(m.get("day")) if m.get("day") and str(m.get("day")).isdigit() else None,
+                pqt=str(m.get("pqt")) if m.get("pqt") is not None else None,
+                iqt=str(m.get("iqt")) if m.get("iqt") is not None else None,
+                balance=str(m.get("bal")) if m.get("bal") is not None else None,
+                verification_status=status,
+                validation=ValidationInfo(
+                    rxcui=val.get("rxcui"),
+                    status=status,
+                    reason=val.get("flag_reason")
+                )
+            ))
+        if items:
+            return PrescriptionRecord(
+                patient=PatientInfo(),
+                prescription=PrescriptionInfo(),
+                medications=items,
+                supplies=[]
+            )
+
+    raise HTTPException(
+        status_code=502,
+        detail={
+            "message": f"AI structuring failed: {extraction_err}",
+            "raw_text": raw_text,
+            "validated_medicines": validated_medicines or []
+        }
     )

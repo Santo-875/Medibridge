@@ -44,7 +44,7 @@ fun ConfidenceBadge(
         color = bg
     ) {
         Text(
-            text = "$percent% Match",
+            text = "$percent% Confidence",
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Bold,
             color = fg,

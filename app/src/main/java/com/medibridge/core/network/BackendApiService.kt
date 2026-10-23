@@ -25,12 +25,23 @@ import com.medibridge.core.session.UserSessionManager
 
 // ── DTOs for Prescription Scanning ──────────────────────────────────────────
 
+data class ApiSupplyItem(
+    val name: String,
+    val category: String? = "supply",
+    val quantity: String? = null,
+    @SerializedName("source_line") val sourceLine: String? = null
+)
+
 data class PrescriptionUploadResponse(
+    val id: String? = null,
     val message: String? = null,
     val filename: String? = null,
     @SerializedName("content_type") val contentType: String? = null,
     val size: Long? = null,
     @SerializedName("raw_text") val rawText: String? = null,
+    val medications: List<ApiMedicationItem> = emptyList(),
+    val supplies: List<ApiSupplyItem> = emptyList(),
+    val warnings: List<String> = emptyList(),
     @SerializedName("prescription_record") val prescriptionRecord: ApiPrescriptionRecord? = null
 )
 
@@ -58,19 +69,32 @@ data class ApiPrescriptionInfo(
 
 data class ApiMedicationItem(
     val medicine: String,
+    val name: String? = null,
+    @SerializedName("generic_name") val genericName: String? = null,
     @SerializedName("normalized_name") val normalizedName: String? = null,
+    val strength: String? = null,
+    val form: String? = null,
+    @SerializedName("dose_per_intake") val dosePerIntake: String? = null,
     val dosage: String? = null,
+    val frequency: String? = null,
     val instruction: String? = null,
+    val timing: String? = null,
     @SerializedName("duration_days") val durationDays: Int? = null,
+    val quantity: String? = null,
     val pqt: String? = null,
     val iqt: String? = null,
     val balance: String? = null,
+    @SerializedName("is_medicine") val isMedicine: Boolean = true,
+    val category: String? = null,
+    val confidence: Float? = null,
+    @SerializedName("source_line") val sourceLine: String? = null,
+    @SerializedName("verification_status") val verificationStatus: String? = null,
     val validation: ApiValidationInfo? = null
 )
 
 data class ApiValidationInfo(
     val rxcui: String? = null,
-    val status: String? = null, // "HIGH", "NEEDS_VERIFICATION", "UNVERIFIED"
+    val status: String? = null,
     val reason: String? = null
 )
 
@@ -345,36 +369,57 @@ object BackendClient {
         doctorRemarks: String? = null,
         imageUrl: String? = null
     ): MedicationObject {
-        val rawStatus = item.validation?.status?.uppercase() ?: "HIGH"
-        val calculatedConfidence = when (rawStatus) {
-            "HIGH" -> 0.95f
+        val rawStatus = item.verificationStatus?.uppercase()
+            ?: item.validation?.status?.uppercase()
+            ?: "UNVERIFIED"
+        val calculatedConfidence = item.confidence ?: when (rawStatus) {
+            "VERIFIED", "HIGH" -> 0.95f
             "NEEDS_VERIFICATION" -> 0.70f
             else -> 0.40f
         }
-        val needsVerification = calculatedConfidence < 0.80f
+        val isVerified = rawStatus == "VERIFIED" || rawStatus == "HIGH"
+        val needsVerification = !isVerified || calculatedConfidence < 0.70f
 
-        val displayName = item.normalizedName ?: item.medicine
-        val durationStr = item.durationDays?.let { "$it days" } ?: "30 days"
-        val timingStr = item.instruction ?: "As directed"
-        val doseStr = item.dosage ?: "1 unit"
+        val displayName = item.name?.takeIf { it.isNotBlank() }
+            ?: item.normalizedName?.takeIf { it.isNotBlank() }
+            ?: item.medicine
+
+        val strengthVal = item.strength?.takeIf { it.isNotBlank() }
+            ?: extractStrength(displayName)
+            ?: ""
+
+        val doseVal = item.dosePerIntake?.takeIf { it.isNotBlank() }
+            ?: item.dosage?.takeIf { it.isNotBlank() }
+            ?: ""
+
+        val timingVal = item.timing?.takeIf { it.isNotBlank() }
+            ?: item.instruction?.takeIf { it.isNotBlank() }
+            ?: ""
+
+        val freqVal = item.frequency?.takeIf { it.isNotBlank() }
+            ?: if (doseVal.isNotBlank() || timingVal.isNotBlank()) inferFrequency(doseVal, timingVal) else ""
+
+        val durationVal = item.durationDays?.let { "$it days" } ?: ""
+
+        val scheduleDose = if (doseVal.isNotBlank()) doseVal else "1 dose"
 
         return MedicationObject(
             id = UUID.randomUUID().toString(),
             name = displayName,
-            strength = extractStrength(item.medicine) ?: doseStr,
-            dose = doseStr,
-            frequency = inferFrequency(doseStr, timingStr),
-            timing = timingStr,
-            duration = durationStr,
+            strength = strengthVal,
+            dose = doseVal,
+            frequency = freqVal,
+            timing = timingVal,
+            duration = durationVal,
             confidence = calculatedConfidence,
             needsVerification = needsVerification,
             verifiedByUser = false,
             crossVerified = false,
             conflicts = emptyList(),
             reviewRecommended = needsVerification,
-            schedule = generateDefaultSchedule(doseStr),
+            schedule = generateDefaultSchedule(scheduleDose),
             adherence = emptyList(),
-            summary = "Prescribed: $displayName. $timingStr",
+            summary = "Prescribed: $displayName ${if (timingVal.isNotBlank()) "- $timingVal" else ""}".trim(),
             sideEffects = emptyList(),
             visibleTo = listOf("patient", "caregiver", "doctor"),
             imageUrl = imageUrl,

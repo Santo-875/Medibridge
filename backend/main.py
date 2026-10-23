@@ -246,69 +246,44 @@ async def upload_prescription(
             detail="Could not read any text from this image. Try better lighting or a flatter angle."
         )
 
-    med_lines = extract_medicine_section(raw_text)
-    blocks = reconstruct_medicine_blocks(med_lines)
-    blocks = merge_medicine_blocks(blocks)
-
-    from concurrent.futures import ThreadPoolExecutor
-
-    def _process_single_block(b):
-        p = parse_medicine_block(b)
-        p["medicine"] = normalize_medicine_text(p["medicine"])
-        p["validation"] = validate_medicine(p["medicine"])
-        return p
-
-    def _process_all_blocks(blks):
-        with ThreadPoolExecutor(max_workers=8) as ex:
-            return list(ex.map(_process_single_block, blks))
-
-    validated = await asyncio.to_thread(_process_all_blocks, blocks)
+    _, encoded_jpg = cv2.imencode(".jpg", ocr_image)
+    ocr_image_bytes = encoded_jpg.tobytes()
 
     record = None
-    if os.environ.get("GROQ_API_KEY"):
+    try:
+        record = await asyncio.to_thread(structure_prescription_with_llm, raw_text, None, ocr_image_bytes)
+    except HTTPException:
+        raise
+    except Exception as llm_err:
+        med_lines = extract_medicine_section(raw_text)
+        blocks = reconstruct_medicine_blocks(med_lines)
+        blocks = merge_medicine_blocks(blocks)
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _process_single_block(b):
+            p = parse_medicine_block(b)
+            p["medicine"] = normalize_medicine_text(p["medicine"])
+            p["validation"] = validate_medicine(p["medicine"])
+            return p
+
+        def _process_all_blocks(blks):
+            with ThreadPoolExecutor(max_workers=8) as ex:
+                return list(ex.map(_process_single_block, blks))
+
+        validated = await asyncio.to_thread(_process_all_blocks, blocks) if blocks else []
         try:
-            record = await asyncio.to_thread(structure_prescription_with_llm, raw_text, validated)
-        except Exception as llm_err:
-            logging.error(f"Groq structuring error: {llm_err}")
+            record = await asyncio.to_thread(structure_prescription_with_llm, raw_text, validated, None)
+        except Exception:
             raise HTTPException(
                 status_code=502,
                 detail={
-                    "message": f"Groq structuring failed: {llm_err}",
-                    "raw_text": raw_text,
-                    "validated_medicines": validated
+                    "message": f"AI structuring failed: {llm_err}",
+                    "raw_text": raw_text
                 }
             )
-    else:
-        medication_items = []
-        for m in validated:
-            raw_med = m.get("medicine", "")
-            val = m.get("validation", {})
-            medication_items.append(MedicationItem(
-                medicine=raw_med,
-                normalized_name=val.get("matched_name") or raw_med,
-                dosage=m.get("dosage"),
-                instruction=m.get("instruction"),
-                duration_days=30,
-                pqt=str(m.get("pqt")) if m.get("pqt") is not None else None,
-                iqt=str(m.get("iqt")) if m.get("iqt") is not None else None,
-                balance=str(m.get("bal")) if m.get("bal") is not None else None,
-                validation=ValidationInfo(
-                    rxcui=val.get("rxcui"),
-                    status=val.get("confidence", "UNVERIFIED"),
-                    reason=val.get("flag_reason")
-                )
-            ))
-        record = PrescriptionRecord(
-            patient=PatientInfo(name=None, age=None, relation=None, mobile=None),
-            prescription=PrescriptionInfo(
-                date=utcnow().strftime("%Y-%m-%d"),
-                time=utcnow().strftime("%H:%M:%S"),
-                prescribed_by=None
-            ),
-            medications=medication_items
-        )
 
-    if not record or not record.medications:
+    if not record or (not record.medications and not getattr(record, "supplies", [])):
         preview = (raw_text[:120] + "...") if len(raw_text) > 120 else raw_text
         raise HTTPException(
             status_code=422,
@@ -341,6 +316,11 @@ async def upload_prescription(
         "message": "Prescription analyzed successfully",
         "filename": file.filename,
         "raw_text": raw_text,
+        "medications": [m.model_dump() for m in record.medications],
+        "supplies": [s.model_dump() for s in getattr(record, "supplies", [])],
+        "patient": record.patient.model_dump() if record.patient else {},
+        "prescription": record.prescription.model_dump() if record.prescription else {},
+        "warnings": [],
         "prescription_record": record.model_dump()
     }
 

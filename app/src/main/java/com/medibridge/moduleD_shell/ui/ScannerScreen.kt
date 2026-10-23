@@ -44,6 +44,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.medibridge.core.model.MedicationObject
 import com.medibridge.core.network.ApiMedicationItem
+import com.medibridge.core.network.ApiSupplyItem
 import com.medibridge.core.network.ApiValidationInfo
 import com.medibridge.core.network.BackendClient
 import com.medibridge.core.pipeline.MedicationIngestionPipeline
@@ -89,7 +90,8 @@ data class ScannedPrescriptionPackage(
     val prescriptionDate: String = "",
     val remarks: String = "",
     val deliveryType: String = "",
-    val rawOcrText: String = ""
+    val rawOcrText: String = "",
+    val supplies: List<ApiSupplyItem> = emptyList()
 )
 
 sealed class ScannerUiState {
@@ -749,6 +751,13 @@ private fun ReviewScreenContent(
     onRetake: () -> Unit
 ) {
     var reviewPkg by remember(pkg) { mutableStateOf(pkg) }
+    var checkedItemIds by remember(pkg) {
+        mutableStateOf(
+            pkg.items.filter { item ->
+                item.medication.confidence >= 0.70f && !item.medication.needsVerification
+            }.map { it.medication.id }.toSet()
+        )
+    }
     var showFullImageDialog by remember { mutableStateOf(false) }
 
     Column(
@@ -865,10 +874,77 @@ private fun ReviewScreenContent(
                 }
             }
 
+            if (reviewPkg.supplies.isNotEmpty()) {
+                item {
+                    var suppliesExpanded by remember { mutableStateOf(false) }
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .clickable { suppliesExpanded = !suppliesExpanded },
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.MedicalServices,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        text = "Medical Supplies (${reviewPkg.supplies.size})",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                Icon(
+                                    imageVector = if (suppliesExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                    contentDescription = if (suppliesExpanded) "Collapse" else "Expand"
+                                )
+                            }
+                            if (suppliesExpanded) {
+                                Spacer(Modifier.height(8.dp))
+                                reviewPkg.supplies.forEach { supply ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 4.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "• ${supply.name}",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        if (!supply.quantity.isNullOrBlank()) {
+                                            Text(
+                                                text = "Qty: ${supply.quantity}",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             itemsIndexed(reviewPkg.items) { index, item ->
                 val med = item.medication
                 val recon = item.reconciliation
-                val isUncertain = med.confidence < 0.80f || recon?.requiresVerification == true
+                val isUncertain = med.confidence < 0.70f || med.needsVerification || recon?.requiresVerification == true
 
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
@@ -889,32 +965,46 @@ private fun ReviewScreenContent(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = "Item #${index + 1}",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Checkbox(
+                                    checked = checkedItemIds.contains(med.id),
+                                    onCheckedChange = { checked ->
+                                        checkedItemIds = if (checked) checkedItemIds + med.id else checkedItemIds - med.id
+                                    }
+                                )
+                                Text(
+                                    text = "Item #${index + 1}",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
 
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                                 ConfidenceBadge(confidence = med.confidence)
 
-                                recon?.let { r ->
-                                    val chipLabel = when (r.status) {
-                                        ReconciliationStatus.NEW -> "New to Regimen"
-                                        ReconciliationStatus.DOSE_CHANGED -> "Dose Changed"
-                                        ReconciliationStatus.DUPLICATE -> "Duplicate"
-                                        ReconciliationStatus.CLASS_OVERLAP -> "Class Overlap"
-                                        ReconciliationStatus.UNCHANGED -> "Unchanged"
-                                    }
-                                    val chipStatus = when (r.status) {
-                                        ReconciliationStatus.NEW -> StatusType.Verified
-                                        ReconciliationStatus.DOSE_CHANGED -> StatusType.Conflict
-                                        ReconciliationStatus.DUPLICATE -> StatusType.Conflict
-                                        ReconciliationStatus.CLASS_OVERLAP -> StatusType.Review
-                                        ReconciliationStatus.UNCHANGED -> StatusType.Verified
-                                    }
-                                    StatusChip(status = chipStatus, customLabel = chipLabel)
+                                val isVerified = med.confidence >= 0.70f && !med.needsVerification
+                                StatusChip(
+                                    status = if (isVerified) StatusType.Verified else StatusType.Review,
+                                    customLabel = if (isVerified) "VERIFIED" else "UNVERIFIED"
+                                )
+
+                                IconButton(
+                                    onClick = {
+                                        reviewPkg = reviewPkg.copy(items = reviewPkg.items.filter { it.medication.id != med.id })
+                                        checkedItemIds = checkedItemIds - med.id
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.DeleteOutline,
+                                        contentDescription = "Remove item",
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(20.dp)
+                                    )
                                 }
                             }
                         }
@@ -938,8 +1028,7 @@ private fun ReviewScreenContent(
                                     )
                                     Spacer(Modifier.width(8.dp))
                                     Text(
-                                        text = recon?.changeSummary?.ifBlank { "Please verify details against the prescription photo." }
-                                            ?: "Please verify details against the prescription photo.",
+                                        text = if (med.confidence < 0.70f) "Low Confidence (<70%) - Please verify details against the prescription photo." else "Unverified - Please verify details against the prescription photo.",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurface
                                     )
@@ -958,6 +1047,9 @@ private fun ReviewScreenContent(
                                 reviewPkg = reviewPkg.copy(items = updatedItems)
                             },
                             label = { Text("Medicine Name") },
+                            placeholder = { Text("Not found, please fill") },
+                            isError = med.name.isBlank(),
+                            supportingText = if (med.name.isBlank()) { { Text("Not found, please fill", color = MaterialTheme.colorScheme.error) } } else null,
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
                             shape = RoundedCornerShape(12.dp)
@@ -978,6 +1070,9 @@ private fun ReviewScreenContent(
                                     reviewPkg = reviewPkg.copy(items = updatedItems)
                                 },
                                 label = { Text("Strength") },
+                                placeholder = { Text("Not found, please fill") },
+                                isError = med.strength.isBlank(),
+                                supportingText = if (med.strength.isBlank()) { { Text("Not found, please fill", color = MaterialTheme.colorScheme.error) } } else null,
                                 modifier = Modifier.weight(1f),
                                 singleLine = true,
                                 shape = RoundedCornerShape(12.dp)
@@ -992,6 +1087,9 @@ private fun ReviewScreenContent(
                                     reviewPkg = reviewPkg.copy(items = updatedItems)
                                 },
                                 label = { Text("Dose") },
+                                placeholder = { Text("Not found, please fill") },
+                                isError = med.dose.isBlank(),
+                                supportingText = if (med.dose.isBlank()) { { Text("Not found, please fill", color = MaterialTheme.colorScheme.error) } } else null,
                                 modifier = Modifier.weight(1f),
                                 singleLine = true,
                                 shape = RoundedCornerShape(12.dp)
@@ -1013,6 +1111,9 @@ private fun ReviewScreenContent(
                                     reviewPkg = reviewPkg.copy(items = updatedItems)
                                 },
                                 label = { Text("Frequency") },
+                                placeholder = { Text("Not found, please fill") },
+                                isError = med.frequency.isBlank(),
+                                supportingText = if (med.frequency.isBlank()) { { Text("Not found, please fill", color = MaterialTheme.colorScheme.error) } } else null,
                                 modifier = Modifier.weight(1f),
                                 singleLine = true,
                                 shape = RoundedCornerShape(12.dp)
@@ -1027,6 +1128,9 @@ private fun ReviewScreenContent(
                                     reviewPkg = reviewPkg.copy(items = updatedItems)
                                 },
                                 label = { Text("Duration") },
+                                placeholder = { Text("Not found, please fill") },
+                                isError = med.duration.isBlank(),
+                                supportingText = if (med.duration.isBlank()) { { Text("Not found, please fill", color = MaterialTheme.colorScheme.error) } } else null,
                                 modifier = Modifier.weight(1f),
                                 singleLine = true,
                                 shape = RoundedCornerShape(12.dp)
@@ -1044,6 +1148,9 @@ private fun ReviewScreenContent(
                                 reviewPkg = reviewPkg.copy(items = updatedItems)
                             },
                             label = { Text("Instructions / Meal Relation") },
+                            placeholder = { Text("Not found, please fill") },
+                            isError = med.timing.isBlank(),
+                            supportingText = if (med.timing.isBlank()) { { Text("Not found, please fill", color = MaterialTheme.colorScheme.error) } } else null,
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
                             shape = RoundedCornerShape(12.dp)
@@ -1055,10 +1162,13 @@ private fun ReviewScreenContent(
 
         Spacer(modifier = Modifier.height(8.dp))
 
+        val selectedItems = reviewPkg.items.filter { checkedItemIds.contains(it.medication.id) }
+
         PrimaryButton(
-            text = "Verify & Save to Regimen (${reviewPkg.items.size})",
+            text = "Verify & Save to Regimen (${selectedItems.size})",
             icon = Icons.Default.CheckCircle,
-            onClick = { onSave(reviewPkg) },
+            enabled = selectedItems.isNotEmpty(),
+            onClick = { onSave(reviewPkg.copy(items = selectedItems)) },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(bottom = 16.dp)
@@ -1208,6 +1318,7 @@ private suspend fun processDocumentAndPipeline(
     file: File?
 ): ScannedPrescriptionPackage {
     val candidateMeds = mutableListOf<MedicationObject>()
+    var suppliesList = listOf<ApiSupplyItem>()
     val uploadTarget = if (file != null && file.exists()) optimizeImageForUpload(context, file) else file
     var doctorName = ""
     var clinicName = ""
@@ -1239,16 +1350,18 @@ private suspend fun processDocumentAndPipeline(
             }
 
             rawText = response.rawText ?: ""
-            val record = response.prescriptionRecord
-            if (record != null && record.medications.isNotEmpty()) {
-                doctorName = record.prescription?.prescribedBy ?: ""
+            suppliesList = response.supplies
+            val medsList = if (response.medications.isNotEmpty()) response.medications else response.prescriptionRecord?.medications ?: emptyList()
+            val presc = response.prescriptionRecord?.prescription
+            if (medsList.isNotEmpty() || suppliesList.isNotEmpty()) {
+                doctorName = presc?.prescribedBy ?: ""
                 clinicName = ""
-                prescriptionDate = record.prescription?.date ?: ""
-                remarks = record.prescription?.remarks ?: ""
-                deliveryType = record.prescription?.deliveryType ?: ""
+                prescriptionDate = presc?.date ?: ""
+                remarks = presc?.remarks ?: ""
+                deliveryType = presc?.deliveryType ?: ""
 
-                val mapped = record.medications.map { apiMed ->
-                    BackendClient.mapPrescriptionItemToObject(apiMed, record.prescription?.remarks)
+                val mapped = medsList.map { apiMed ->
+                    BackendClient.mapPrescriptionItemToObject(apiMed, presc?.remarks)
                 }
                 candidateMeds.addAll(mapped)
             } else {
@@ -1267,7 +1380,7 @@ private suspend fun processDocumentAndPipeline(
         }
     }
 
-    if (candidateMeds.isEmpty()) {
+    if (candidateMeds.isEmpty() && suppliesList.isEmpty()) {
         throw IllegalStateException("No medications found to ingest. Please ensure prescription is legible.")
     }
 
@@ -1280,7 +1393,8 @@ private suspend fun processDocumentAndPipeline(
         prescriptionDate = prescriptionDate,
         remarks = remarks,
         deliveryType = deliveryType,
-        rawOcrText = rawText
+        rawOcrText = rawText,
+        supplies = suppliesList
     )
 }
 

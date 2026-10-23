@@ -80,7 +80,7 @@ def test_groq_failure_returns_502_with_raw_ocr_data():
 
     assert resp.status_code == 502
     data = resp.json()["detail"]
-    assert "Groq structuring failed" in data["message"]
+    assert "structuring failed" in data["message"].lower()
     assert "PARACETAMOL 500MG" in data["raw_text"]
     assert len(data["validated_medicines"]) > 0
 
@@ -121,3 +121,159 @@ def test_speech_round_trip_success_path():
             assert data["transcript_tamil"] == "வணக்கம்"
             assert data["transcript_english"] == "Hello"
             assert data["summary"]["diagnosis"] == "Healthy"
+
+def test_junk_prescription_filtering_with_mocked_llm():
+    from prescription_scanning.main import RawLLMExtraction, MedicationExtractionItem, process_raw_extraction
+
+    junk_raw_text = """
+    CENTRAL HOSPITAL DISPENSARY
+    PATIENT: RAMESH KUMAR 58Y M
+    DIAGNOSIS: CA BLADDER / CKD / GLAUCOMA Delivery
+    SL NO   ITEM NAME   DOSAGE  PQT
+    1       TAB ATORVASTATIN 10MG   1 x od
+    2       CA BLADDER / CKD / GLAUCOMA Delivery
+    3       NO
+    4       NEEDLE 31G 5MM  10
+    """
+
+    mock_llm_data = RawLLMExtraction(
+        medications=[
+            MedicationExtractionItem(
+                name="Atorvastatin 10mg",
+                generic_name="Atorvastatin",
+                strength="10mg",
+                dose_per_intake="10mg",
+                frequency="OD",
+                duration_days=None,
+                is_medicine=True,
+                category="medicine",
+                confidence=0.95
+            ),
+            MedicationExtractionItem(
+                name="CA BLADDER / CKD / GLAUCOMA Delivery",
+                is_medicine=False,
+                category="diagnosis",
+                confidence=0.2
+            ),
+            MedicationExtractionItem(
+                name="NO",
+                is_medicine=False,
+                category="noise",
+                confidence=0.1
+            ),
+            MedicationExtractionItem(
+                name="NEEDLE 31G 5MM",
+                quantity="10",
+                is_medicine=False,
+                category="supply",
+                confidence=0.9
+            )
+        ]
+    )
+
+    record = process_raw_extraction(mock_llm_data)
+
+    med_names = [m.name for m in record.medications]
+    assert "Atorvastatin 10mg" in med_names
+    assert not any("CA BLADDER" in name for name in med_names)
+    assert not any("CKD" in name for name in med_names)
+    assert "NO" not in med_names
+    assert not any("NEEDLE" in name for name in med_names)
+
+    supply_names = [s.name for s in record.supplies]
+    assert any("NEEDLE" in s for s in supply_names)
+
+    atorvastatin_item = next(m for m in record.medications if "Atorvastatin" in m.name)
+    assert atorvastatin_item.duration_days is None
+
+def test_clean_printout_with_mocked_llm():
+    from prescription_scanning.main import RawLLMExtraction, MedicationExtractionItem, process_raw_extraction
+
+    clean_data = RawLLMExtraction(
+        medications=[
+            MedicationExtractionItem(
+                name="Metformin 500mg",
+                generic_name="Metformin",
+                strength="500mg",
+                dose_per_intake="500mg",
+                frequency="BD",
+                timing="After meals",
+                duration_days=30,
+                is_medicine=True,
+                confidence=0.98
+            ),
+            MedicationExtractionItem(
+                name="Omeprazole 20mg",
+                generic_name="Omeprazole",
+                strength="20mg",
+                dose_per_intake="20mg",
+                frequency="OD",
+                timing="Before breakfast",
+                duration_days=None,
+                is_medicine=True,
+                confidence=0.92
+            ),
+            MedicationExtractionItem(
+                name="Disposable Syringe 5ml",
+                quantity="5",
+                is_medicine=False,
+                category="supply",
+                confidence=0.95
+            )
+        ]
+    )
+
+    record = process_raw_extraction(clean_data)
+    assert len(record.medications) == 2
+    assert len(record.supplies) == 1
+    assert record.supplies[0].name == "Disposable Syringe 5ml"
+
+    omeprazole = next(m for m in record.medications if "Omeprazole" in m.name)
+    assert omeprazole.duration_days is None
+
+def test_handwritten_noisy_text_with_mocked_llm():
+    from prescription_scanning.main import RawLLMExtraction, MedicationExtractionItem, process_raw_extraction
+
+    noisy_data = RawLLMExtraction(
+        medications=[
+            MedicationExtractionItem(
+                name="Atorvastatin 10mg",
+                generic_name="Atorvastatin",
+                strength="10mg",
+                frequency="OD",
+                duration_days=None,
+                is_medicine=True,
+                confidence=0.85
+            ),
+            MedicationExtractionItem(
+                name="Paracetamol 650mg",
+                generic_name="Paracetamol",
+                strength="650mg",
+                frequency="SOS",
+                duration_days=None,
+                is_medicine=True,
+                confidence=0.88
+            ),
+            MedicationExtractionItem(
+                name="NO",
+                is_medicine=False,
+                confidence=0.1
+            ),
+            MedicationExtractionItem(
+                name="Needles 10 nos",
+                is_medicine=False,
+                category="supply",
+                confidence=0.8
+            )
+        ]
+    )
+
+    record = process_raw_extraction(noisy_data)
+    med_names = [m.name for m in record.medications]
+    assert "Atorvastatin 10mg" in med_names
+    assert "Paracetamol 650mg" in med_names
+    assert "NO" not in med_names
+    assert not any("Needles" in name for name in med_names)
+
+    assert len(record.supplies) == 1
+    assert "Needles" in record.supplies[0].name
