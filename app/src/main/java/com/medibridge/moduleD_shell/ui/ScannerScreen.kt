@@ -967,7 +967,8 @@ private fun ReviewScreenContent(
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                modifier = Modifier.weight(1f)
                             ) {
                                 Checkbox(
                                     checked = checkedItemIds.contains(med.id),
@@ -975,12 +976,28 @@ private fun ReviewScreenContent(
                                         checkedItemIds = if (checked) checkedItemIds + med.id else checkedItemIds - med.id
                                     }
                                 )
-                                Text(
-                                    text = "Item #${index + 1}",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
+                                Column(modifier = Modifier.padding(start = 4.dp)) {
+                                    val titleText = if (med.strength.isNotBlank() && !med.name.contains(med.strength, ignoreCase = true)) {
+                                        "${med.name} ${med.strength}".trim()
+                                    } else {
+                                        med.name.trim()
+                                    }
+                                    Text(
+                                        text = titleText.ifBlank { "Item #${index + 1}" },
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    val printedSub = item.printedName.takeIf { it.isNotBlank() }
+                                        ?: med.summary.removePrefix("Prescribed: ").trim()
+                                    if (printedSub.isNotBlank() && !printedSub.equals(titleText, ignoreCase = true)) {
+                                        Text(
+                                            text = printedSub,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
                             }
 
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {

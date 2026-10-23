@@ -1,4 +1,7 @@
 import io
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
 import cv2
 import numpy as np
 import pytest
@@ -277,3 +280,83 @@ def test_handwritten_noisy_text_with_mocked_llm():
 
     assert len(record.supplies) == 1
     assert "Needles" in record.supplies[0].name
+
+def test_dose_code_parsing_and_quantity_check():
+    from prescription_scanning.main import parse_dose_code, check_quantity
+
+    d1 = parse_dose_code("1 x td", "After Meal")
+    assert d1["units_per_intake"] == 1
+    assert d1["times_per_day"] == 3
+    assert d1["freq_code"] == "TDS"
+
+    w1 = check_quantity("ALPHA KETOANALOGUE 200 MG TAB", 1, 3, 30, "90")
+    assert w1 == []
+
+    d2 = parse_dose_code("2 x bd", "After Meal")
+    assert d2["units_per_intake"] == 2
+    assert d2["times_per_day"] == 2
+    assert d2["freq_code"] == "BD"
+
+    w2 = check_quantity("SODIUM BICARBONATE-500MG TAB", 2, 2, 30, "120")
+    assert w2 == []
+
+    w3 = check_quantity("MISMATCH TAB", 1, 1, 30, "15")
+    assert "quantity doesn't match dose/frequency" in w3
+
+    w_drop = check_quantity("DORZOLAMIDE EYE DROPS", 1, 2, 30, "1")
+    assert w_drop == []
+
+def test_opd_receipt_fixture_mocked_llm():
+    from pathlib import Path
+    from prescription_scanning.main import structure_prescription_with_llm
+
+    fixture_path = Path(__file__).parent / "fixtures" / "opd_receipt.txt"
+    if not fixture_path.exists():
+        fixture_path = Path("tests/fixtures/opd_receipt.txt")
+
+    with open(fixture_path, "r", encoding="utf-8") as f:
+        raw_text = f.read()
+
+    record = structure_prescription_with_llm(raw_text)
+
+    assert len(record.medications) == 12
+    assert len(record.supplies) == 1
+
+    supply_item = record.supplies[0]
+    assert "NEEDLE" in supply_item.name.upper()
+
+    for m in record.medications:
+        assert len(m.name.strip()) >= 3
+        upper = m.name.upper()
+        assert not any(diag in upper for diag in ["DM2", "HTN", "CA BLADDER", "CKD", "GLAUCOMA", "DIAGNOSIS", "REMARKS"])
+        assert "DELIVERY" not in upper
+        assert upper != "NO"
+
+import os
+
+@pytest.mark.skipif(
+    not os.environ.get("GEMINI_API_KEY") and not os.environ.get("GROQ_API_KEY"),
+    reason="LLM API key required for live test"
+)
+def test_opd_receipt_fixture_live_llm():
+    from pathlib import Path
+    from prescription_scanning.main import structure_prescription_with_llm
+
+    fixture_path = Path(__file__).parent / "fixtures" / "opd_receipt.txt"
+    if not fixture_path.exists():
+        fixture_path = Path("tests/fixtures/opd_receipt.txt")
+
+    with open(fixture_path, "r", encoding="utf-8") as f:
+        raw_text = f.read()
+
+    record = structure_prescription_with_llm(raw_text)
+
+    assert len(record.medications) == 12
+    assert len(record.supplies) == 1
+
+    for m in record.medications:
+        assert len(m.name.strip()) >= 3
+        upper = m.name.upper()
+        assert not any(diag in upper for diag in ["DM2", "HTN", "CA BLADDER", "CKD", "GLAUCOMA", "DIAGNOSIS", "REMARKS"])
+        assert "DELIVERY" not in upper
+        assert upper != "NO"

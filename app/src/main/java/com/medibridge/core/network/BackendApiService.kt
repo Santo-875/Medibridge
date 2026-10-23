@@ -380,13 +380,21 @@ object BackendClient {
         val isVerified = rawStatus == "VERIFIED" || rawStatus == "HIGH"
         val needsVerification = !isVerified || calculatedConfidence < 0.70f
 
-        val displayName = item.name?.takeIf { it.isNotBlank() }
-            ?: item.normalizedName?.takeIf { it.isNotBlank() }
-            ?: item.medicine
+        val rawPrinted = item.medicine.trim()
+        val normalizedTitle = item.normalizedName?.takeIf { it.isNotBlank() }
+            ?: item.name?.takeIf { it.isNotBlank() }
+            ?: rawPrinted
 
         val strengthVal = item.strength?.takeIf { it.isNotBlank() }
-            ?: extractStrength(displayName)
+            ?: extractStrength(normalizedTitle)
+            ?: extractStrength(rawPrinted)
             ?: ""
+
+        val displayName = if (strengthVal.isNotBlank() && !normalizedTitle.contains(strengthVal, ignoreCase = true)) {
+            "$normalizedTitle $strengthVal".trim()
+        } else {
+            normalizedTitle
+        }
 
         val doseVal = item.dosePerIntake?.takeIf { it.isNotBlank() }
             ?: item.dosage?.takeIf { it.isNotBlank() }
@@ -419,7 +427,7 @@ object BackendClient {
             reviewRecommended = needsVerification,
             schedule = generateDefaultSchedule(scheduleDose),
             adherence = emptyList(),
-            summary = "Prescribed: $displayName ${if (timingVal.isNotBlank()) "- $timingVal" else ""}".trim(),
+            summary = rawPrinted.ifBlank { "Prescribed: $displayName ${if (timingVal.isNotBlank()) "- $timingVal" else ""}".trim() },
             sideEffects = emptyList(),
             visibleTo = listOf("patient", "caregiver", "doctor"),
             imageUrl = imageUrl,

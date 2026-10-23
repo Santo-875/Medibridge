@@ -52,6 +52,7 @@ class MedicationItem(BaseModel):
     source_line: Optional[str] = None
     verification_status: Optional[str] = "UNVERIFIED"
     validation: ValidationInfo
+    warnings: List[str] = []
 
 class SupplyItem(BaseModel):
     name: str
@@ -81,14 +82,20 @@ class MedicationExtractionItem(BaseModel):
     strength: Optional[str] = None
     form: Optional[str] = None
     dose_per_intake: Optional[str] = None
+    dosage: Optional[str] = None
     frequency: Optional[str] = None
+    instruction: Optional[str] = None
     timing: Optional[str] = None
     duration_days: Optional[int] = None
     quantity: Optional[str] = None
+    pqt: Optional[str] = None
+    iqt: Optional[str] = None
+    balance: Optional[str] = None
     is_medicine: bool = True
     category: Optional[str] = "medicine"
     confidence: float = 1.0
     source_line: Optional[str] = None
+    warnings: List[str] = []
 
 class RawLLMExtraction(BaseModel):
     patient: Optional[PatientInfo] = None
@@ -175,10 +182,11 @@ def reconstruct_ocr_text(result):
 def check_medicine_with_rxnorm(medicine_name):
     if not medicine_name or len(medicine_name.strip()) < 3:
         return None
+    search_term = re.sub(r"\bFRUSEMIDE\b", "FUROSEMIDE", medicine_name.strip(), flags=re.IGNORECASE)
     url = (
         "https://rxnav.nlm.nih.gov/REST/approximateTerm.json?"
         + urllib.parse.urlencode({
-            "term": medicine_name,
+            "term": search_term,
             "maxEntries": 5
         })
     )
@@ -225,11 +233,12 @@ def validate_medicine(medicine_text):
         rxcui = result["rxcui"]
 
         raw_upper = raw_medicine.upper()
+        raw_upper_norm = re.sub(r"\bFRUSEMIDE\b", "FUROSEMIDE", raw_upper)
         matched_upper = matched_name.upper()
 
-        raw_tokens = raw_upper.split()
+        raw_tokens = raw_upper_norm.split()
         drug_name = raw_tokens[0] if raw_tokens else ""
-        strength_match = re.search(r"\b\d+(\.\d+)?\s*(MG|MCG|G|%)\b", raw_upper)
+        strength_match = re.search(r"\b\d+(\.\d+)?\s*(MG|MCG|G|%)\b", raw_upper_norm)
         strength = strength_match.group(0).replace(" ", "") if strength_match else None
 
         matched_has_drug = drug_name and drug_name in matched_upper
@@ -242,7 +251,7 @@ def validate_medicine(medicine_text):
         if "KETOANALOGUE" in raw_upper and "LIPOIC" in matched_upper:
             is_drug_mismatch = True
 
-        if (raw_upper == matched_upper or (matched_has_drug and matched_has_strength)) \
+        if (raw_upper_norm == matched_upper or (matched_has_drug and matched_has_strength)) \
                 and not is_medical_supply \
                 and not is_combination \
                 and not is_drug_mismatch:
@@ -271,11 +280,16 @@ def validate_medicine(medicine_text):
             "flag_reason": f"RxNorm verification degraded: {e}"
         }
 def extract_medicine_section(raw_text):
-    lines = raw_text.splitlines()
+    if re.search(r"\bPRESCRIBED\s+MEDICINES?\b", raw_text, re.IGNORECASE):
+        parts = re.split(r"\bPRESCRIBED\s+MEDICINES?\b", raw_text, maxsplit=1, flags=re.IGNORECASE)
+        section_text = parts[1]
+        lines = section_text.splitlines()
+        inside = True
+    else:
+        lines = raw_text.splitlines()
+        inside = False
 
     medicine_lines = []
-    inside = False
-
     stop_keywords = [
         "DIAGNOSIS", "DIAGNOSES", "IMPRESSION", "REMARKS", "CLINICAL NOTES",
         "CHIEF COMPLAINTS", "CA BLADDER", "CKD", "SIGNATURE", "PRESCRIBED BY",
@@ -292,11 +306,11 @@ def extract_medicine_section(raw_text):
         if inside:
             if any(term in upper for term in stop_keywords):
                 break
-            if upper.startswith("NOMENCLATURE"):
+            if upper.startswith("NOMENCLATURE") or re.search(r"\bNOMENCLATURE\b", upper):
                 continue
             medicine_lines.append(line)
         else:
-            if any(term in upper for term in ["PRESCRIBED", "MEDICINE", "MEDICINES", "NOMENCLATURE"]):
+            if any(term in upper for term in ["PRESCRIBED", "MEDICINE", "MEDICINES"]):
                 inside = True
                 continue
             if any(k in upper for k in ["TAB", "CAP", "MG", "MCG", "DROPS", "SYRUP", "AFTER", "BEFORE"]):
@@ -491,6 +505,235 @@ def normalize_medicine_text(text):
     return text
 
 
+def parse_dose_code(dosage_str: Optional[str], instruction_str: Optional[str] = ""):
+    units_per_intake = None
+    times_per_day = None
+    freq_code = None
+    timing_desc = None
+
+    combined = f"{dosage_str or ''} {instruction_str or ''}".strip()
+    drop_m = re.search(r"(\d+)\s+drop(?:s)?", combined, re.I)
+    if drop_m:
+        units_per_intake = int(drop_m.group(1))
+        if "twice a day" in combined.lower() or "twice" in combined.lower():
+            times_per_day = 2
+            freq_code = "BD"
+        elif "thrice" in combined.lower() or "three times" in combined.lower():
+            times_per_day = 3
+            freq_code = "TDS"
+        else:
+            times_per_day = 1
+            freq_code = "OD"
+    else:
+        m = re.search(r"(\d+)\s*[xX]\s*([a-zA-Z]+)", dosage_str or "")
+        if m:
+            units_per_intake = int(m.group(1))
+            code = m.group(2).lower()
+            if code in ["od", "hs"]:
+                times_per_day = 1
+                freq_code = code.upper()
+                if code == "hs":
+                    timing_desc = "At bedtime"
+            elif code in ["bd", "bid"]:
+                times_per_day = 2
+                freq_code = "BD"
+            elif code in ["td", "tds", "tid"]:
+                times_per_day = 3
+                freq_code = "TDS"
+            elif code in ["qid"]:
+                times_per_day = 4
+                freq_code = "QID"
+            else:
+                freq_code = code.upper()
+
+    if re.search(r"\bLA\b", instruction_str or ""):
+        timing_desc = (timing_desc + ", Local Application") if timing_desc else "Local Application"
+
+    return {
+        "units_per_intake": units_per_intake,
+        "times_per_day": times_per_day,
+        "freq_code": freq_code,
+        "timing_desc": timing_desc
+    }
+
+
+def check_quantity(medicine_name: str, units_per_intake: Optional[int], times_per_day: Optional[int], days_val: Optional[int], pqt_str: Optional[str]) -> List[str]:
+    warnings = []
+    upper = medicine_name.upper()
+    is_liquid_or_drop = any(term in upper for term in ["DROP", "DROPS", "SYRUP", "SUSPENSION", "SOLUTION", "ELIXIR", "OINTMENT", "GEL", "CREAM", "LOTION", "LA"])
+    if is_liquid_or_drop:
+        return warnings
+
+    try:
+        if pqt_str is not None and days_val is not None and units_per_intake is not None and times_per_day is not None:
+            pqt = int(str(pqt_str).strip())
+            days = int(days_val)
+            expected_pqt = units_per_intake * times_per_day * days
+            if pqt != expected_pqt:
+                warnings.append("quantity doesn't match dose/frequency")
+    except (ValueError, TypeError):
+        pass
+
+    return warnings
+
+
+def parse_prescription_receipt_table(raw_text: str) -> Optional[RawLLMExtraction]:
+    if not re.search(r"\bPRESCRIBED\s+MEDICINES?\b", raw_text, re.IGNORECASE):
+        return None
+
+    header_part, med_part = re.split(r"\bPRESCRIBED\s+MEDICINES?\b", raw_text, maxsplit=1, flags=re.IGNORECASE)
+
+    patient = PatientInfo()
+    name_m = re.search(r"Patient\s*Name\s*:\s*([^:\n]+?)(?=\s+Age|\s*$)", header_part, re.IGNORECASE)
+    if name_m:
+        patient.name = name_m.group(1).strip()
+    age_m = re.search(r"Age\s*:\s*(\d+)", header_part, re.IGNORECASE)
+    if age_m:
+        patient.age = int(age_m.group(1))
+    rel_m = re.search(r"Relation\s*:\s*([^:\n]+?)(?=\s+Service|\s*$)", header_part, re.IGNORECASE)
+    if rel_m:
+        patient.relation = rel_m.group(1).strip()
+    mob_m = re.search(r"Mobile\s*(?:No)?\s*:\s*(\d+)", header_part, re.IGNORECASE)
+    if mob_m:
+        patient.mobile = mob_m.group(1).strip()
+    serv_m = re.search(r"Service\s*(?:No)?\s*:\s*([^\s\n]+)", header_part, re.IGNORECASE)
+    if serv_m:
+        patient.service_no = serv_m.group(1).strip()
+    card_m = re.search(r"Card\s*(?:No)?\s*:\s*([^\s\n]+)", header_part, re.IGNORECASE)
+    if card_m:
+        patient.card_no = card_m.group(1).strip()
+
+    presc = PrescriptionInfo()
+    date_m = re.search(r"OPD\s*Date\s*:\s*(\d{4}-\d{2}-\d{2})", header_part, re.IGNORECASE)
+    if date_m:
+        presc.date = date_m.group(1)
+    time_m = re.search(r"OPD\s*Time\s*:\s*(\d{2}:\d{2}:\d{2})", header_part, re.IGNORECASE)
+    if time_m:
+        presc.time = time_m.group(1)
+    doc_m = re.search(r"Prescribed\s*By\s*:\s*([^:\n]+?)(?=\s+Card|\s*$)", header_part, re.IGNORECASE)
+    if doc_m:
+        presc.prescribed_by = doc_m.group(1).strip()
+    rem_m = re.search(r"OPD\s*ReMarks\s*:\s*([^:\n]+?)(?=\s+Delivery|\s*$)", header_part, re.IGNORECASE)
+    if rem_m:
+        presc.remarks = rem_m.group(1).strip()
+    deliv_m = re.search(r"Type\s*:\s*([^\n]+)", header_part, re.IGNORECASE)
+    if deliv_m:
+        presc.delivery_type = deliv_m.group(1).strip()
+    tok_m = re.search(r"Token\s*(?:No)?\s*:\s*([^\s\n]+)", header_part, re.IGNORECASE)
+    if tok_m:
+        presc.token_no = tok_m.group(1).strip()
+
+    lines = [line.strip() for line in med_part.splitlines() if line.strip()]
+    qty_regex = re.compile(r"\b(\d+)\s+(\d+|N/A)\s+(\d+|N/A)\s+(\d+|N/A)\s*$", re.IGNORECASE)
+    dosage_regex = re.compile(r"\b(\d+\s*[xX]\s*[a-zA-Z]+|\d+\s+Drop(?:s)?(?:\s+twice\s+a\s+day)?)\b", re.IGNORECASE)
+
+    raw_items: List[MedicationExtractionItem] = []
+    current_row = None
+
+    def _build_row_item(row: dict) -> MedicationExtractionItem:
+        raw_nom = " ".join(row["nom_parts"])
+        raw_nom = re.sub(r"\s+", " ", raw_nom).strip()
+        raw_nom = re.sub(r"(\d+)\s*M\s+G\b", r"\1MG", raw_nom)
+        raw_nom = re.sub(r"(\d+)\s+OMG\b", r"\1MG", raw_nom)
+        raw_nom = re.sub(r"\bTAB\s+s\b", "TAB", raw_nom, flags=re.IGNORECASE)
+
+        raw_inst = " ".join(row["instruction_parts"]).strip()
+
+        dose_info = parse_dose_code(row["dosage"], raw_inst)
+        units = dose_info["units_per_intake"]
+        freq = dose_info["freq_code"]
+        timing = dose_info["timing_desc"] or raw_inst
+
+        supply_keywords = ["NEEDLE", "NEEDLES", "SYRINGE", "SYRINGES", "LANCET", "STRIP", "STRIPS"]
+        is_sup = any(k in raw_nom.upper() for k in supply_keywords)
+
+        form = "tablet"
+        if "CAP" in raw_nom.upper():
+            form = "capsule"
+        elif "DROP" in raw_nom.upper():
+            form = "drops"
+
+        str_match = re.search(r"\b\d+(\.\d+)?\s*(?:MG|MCG|G|%W/V|%)\b", raw_nom, re.IGNORECASE)
+        strength = str_match.group(0) if str_match else None
+
+        day_val = int(row["day"]) if row["day"] and str(row["day"]).isdigit() else None
+
+        return MedicationExtractionItem(
+            name=raw_nom,
+            strength=strength,
+            form=form,
+            dose_per_intake=f"{units} tablet" if units and form == "tablet" else (str(units) if units else row["dosage"]),
+            dosage=row["dosage"],
+            frequency=freq,
+            instruction=raw_inst or None,
+            timing=timing or None,
+            duration_days=day_val,
+            quantity=row["pqt"],
+            pqt=row["pqt"],
+            iqt=row["iqt"],
+            balance=row["bal"],
+            is_medicine=not is_sup,
+            category="supply" if is_sup else "medicine",
+            confidence=1.0,
+            source_line=raw_nom
+        )
+
+    for line in lines:
+        if re.search(r"\bNOMENCLATURE\b", line, re.IGNORECASE):
+            continue
+
+        qty_match = qty_regex.search(line)
+        if qty_match:
+            if current_row:
+                raw_items.append(_build_row_item(current_row))
+
+            day = qty_match.group(1)
+            pqt = qty_match.group(2)
+            iqt = qty_match.group(3)
+            bal = qty_match.group(4)
+            before_qty = line[:qty_match.start()].strip()
+
+            dos_match = dosage_regex.search(before_qty)
+            if dos_match:
+                nom_part = before_qty[:dos_match.start()].strip()
+                dos_part = dos_match.group(0).strip()
+                inst_part = before_qty[dos_match.end():].strip()
+            else:
+                nom_part = before_qty
+                dos_part = None
+                inst_part = None
+
+            current_row = {
+                "nom_parts": [nom_part] if nom_part else [],
+                "dosage": dos_part,
+                "instruction_parts": [inst_part] if inst_part else [],
+                "day": day,
+                "pqt": pqt,
+                "iqt": iqt,
+                "bal": bal
+            }
+        else:
+            if current_row:
+                continuation_line = line
+                freq_wrap_match = re.search(r"\b(twice\s+a\s+day|a\s+day|twice|daily|once\s+a\s+day)\b", continuation_line, re.IGNORECASE)
+                if freq_wrap_match:
+                    found_freq = freq_wrap_match.group(0)
+                    current_row["instruction_parts"].append(found_freq)
+                    continuation_line = (continuation_line[:freq_wrap_match.start()] + " " + continuation_line[freq_wrap_match.end():]).strip()
+
+                if continuation_line:
+                    current_row["nom_parts"].append(continuation_line)
+
+    if current_row:
+        raw_items.append(_build_row_item(current_row))
+
+    return RawLLMExtraction(
+        patient=patient,
+        prescription=presc,
+        medications=raw_items
+    )
+
+
 UPLOAD_DIR = "image_uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -598,10 +841,14 @@ async def upload_prescription(file: UploadFile = File(...)):
 
 EXTRACTION_SYSTEM_PROMPT = """Extract the patient info, prescription details, prescribed medications, and medical supplies from this prescription receipt or doctor's order.
 Only genuine medications should have is_medicine=true and category="medicine".
-Diagnoses (such as CA BLADDER, CKD, GLAUCOMA), medical conditions, clinic names, doctor names, delivery instructions, remarks, and OCR noise (such as 'NO', 'SL NO', table headers) are NOT medicines.
-Medical supplies (such as needles, syringes, lancets, test strips, gauze, cotton) must have is_medicine=false and category="supply".
+If the document contains 'PRESCRIBED MEDICINE', start parsing medications only after that header; everything above it (patient info, remarks, delivery type, diagnosis) is header data and must never be parsed as medicines.
+In table-layout receipts (columns: Nomenclature | Dosage | Instruction | Day | PQT | IQT | Bal), medicine names may wrap across up to 5 lines where dosage appears only on the first line; merge wrapped lines into ONE medicine (multi-ingredient tablets joined with '+').
+Parse dose codes: 'N x CODE' means N units per intake. od/hs=1/day, bd=2/day, td/tds/tid=3/day, qid=4/day. '1 Drop twice a day' = 1 drop, 2/day. 'LA' = local application. hs = at bedtime.
+Medical supplies (such as pen needles, syringes, lancets, test strips, gauze, cotton) must have is_medicine=false and category="supply".
+Keep combination and supplement tablets even if they are multi-ingredient formulations (status UNVERIFIED).
+Diagnoses (such as DM2, HTN, CA BLADDER, CKD, GLAUCOMA), medical conditions, remarks, delivery instructions, and OCR noise (such as 'NO', 'SL NO', table headers) are NOT medicines.
 Do not invent dosage, frequency, or duration if not printed; leave them null.
-Fix obvious OCR typos in medicine names (e.g. A2CR9ARAZiN -> Atorvastatin, SODEUX BICA3S0KAIE -> Sodium Bicarbonate).
+Fix obvious OCR typos in medicine names (e.g. A2CR9ARAZiN -> Atorvastatin, FRUSEMIDE -> Furosemide).
 Normalise abbreviations (OD, BD, TDS, TID, QID, HS, SOS, AC, PC).
 Return a JSON object matching the requested schema."""
 
@@ -673,10 +920,15 @@ Return a valid JSON object matching this schema:
       "strength": null,
       "form": "tablet|capsule|syrup|drops|injection|other",
       "dose_per_intake": null,
+      "dosage": null,
       "frequency": "OD|BD|TDS|QID|HS|SOS|other",
+      "instruction": null,
       "timing": "Before food|After food|Bedtime",
       "duration_days": null,
       "quantity": null,
+      "pqt": null,
+      "iqt": null,
+      "balance": null,
       "is_medicine": true,
       "category": "medicine",
       "confidence": 1.0,
@@ -720,7 +972,7 @@ def process_raw_extraction(raw_data: RawLLMExtraction) -> PrescriptionRecord:
     med_candidates: List[MedicationExtractionItem] = []
 
     supply_keywords = ["NEEDLE", "NEEDLES", "SYRINGE", "SYRINGES", "LANCET", "STRIP", "STRIPS", "DRESSING", "GAUZE", "COTTON", "BANDAGE", "CATHETER"]
-    diagnosis_keywords = ["CA BLADDER", "CKD", "GLAUCOMA", "CARCINOMA", "DIAGNOSIS", "DIAGNOSES"]
+    diagnosis_keywords = ["CA BLADDER", "CKD", "GLAUCOMA", "CARCINOMA", "DIAGNOSIS", "DIAGNOSES", "DM2", "HTN", "HYPERTENSION", "DIABETES"]
     noise_keywords = ["NO", "YES", "NA", "N/A", "NIL", "NONE", "SL NO", "ITEM", "TOTAL", "DELIVERY"]
 
     for item in raw_data.medications:
@@ -729,7 +981,7 @@ def process_raw_extraction(raw_data: RawLLMExtraction) -> PrescriptionRecord:
             continue
 
         upper_name = name.upper()
-        if upper_name in noise_keywords:
+        if upper_name in noise_keywords or re.search(r"\bDelivery\b", name, re.IGNORECASE):
             continue
 
         if any(diag in upper_name for diag in diagnosis_keywords):
@@ -745,8 +997,8 @@ def process_raw_extraction(raw_data: RawLLMExtraction) -> PrescriptionRecord:
             supplies.append(SupplyItem(
                 name=name,
                 category="supply",
-                quantity=item.quantity or item.dose_per_intake,
-                source_line=item.source_line
+                quantity=item.quantity or item.pqt or item.dose_per_intake,
+                source_line=item.source_line or name
             ))
             continue
 
@@ -768,8 +1020,22 @@ def process_raw_extraction(raw_data: RawLLMExtraction) -> PrescriptionRecord:
         )
 
         norm_name = val_res.get("matched_name") if is_verified else m.name
-        dosage_val = m.dose_per_intake or m.strength
-        instruction_val = m.timing or m.frequency
+        dosage_val = m.dosage or m.dose_per_intake or m.strength
+        instruction_val = m.instruction or m.timing or m.frequency
+
+        parsed_dose = parse_dose_code(dosage_val, instruction_val)
+        units = parsed_dose["units_per_intake"]
+        tpd = parsed_dose["times_per_day"]
+        freq_parsed = parsed_dose["freq_code"] or m.frequency
+        timing_parsed = parsed_dose["timing_desc"] or m.timing
+
+        dose_val = m.dose_per_intake or (f"{units} tablet" if units and (m.form == "tablet" or "TAB" in (m.name or "").upper()) else (str(units) if units else dosage_val))
+        freq_val = freq_parsed or m.frequency
+        timing_val = timing_parsed or instruction_val
+        duration = m.duration_days
+        pqt_val = m.pqt or m.quantity
+
+        qty_warnings = check_quantity(m.name, units, tpd, duration, pqt_val)
 
         return MedicationItem(
             medicine=m.name,
@@ -778,22 +1044,23 @@ def process_raw_extraction(raw_data: RawLLMExtraction) -> PrescriptionRecord:
             normalized_name=norm_name,
             strength=m.strength,
             form=m.form,
-            dose_per_intake=m.dose_per_intake,
+            dose_per_intake=dose_val,
             dosage=dosage_val,
-            frequency=m.frequency,
+            frequency=freq_val,
             instruction=instruction_val,
-            timing=m.timing,
-            duration_days=m.duration_days,
-            quantity=m.quantity,
-            pqt=m.quantity,
-            iqt=m.quantity,
-            balance=None,
+            timing=timing_val,
+            duration_days=duration,
+            quantity=pqt_val,
+            pqt=pqt_val,
+            iqt=m.iqt,
+            balance=m.balance,
             is_medicine=True,
             category="medicine",
             confidence=m.confidence,
-            source_line=m.source_line,
+            source_line=m.source_line or m.name,
             verification_status=verification_status,
-            validation=validation_obj
+            validation=validation_obj,
+            warnings=qty_warnings
         )
 
     from concurrent.futures import ThreadPoolExecutor
@@ -832,6 +1099,9 @@ def structure_prescription_with_llm(
             raw_extraction = extract_prescription_with_groq(raw_text)
         except Exception as e:
             extraction_err = e
+
+    if raw_extraction is None and re.search(r"\bPRESCRIBED\s+MEDICINES?\b", raw_text, re.IGNORECASE):
+        raw_extraction = parse_prescription_receipt_table(raw_text)
 
     if raw_extraction is not None:
         return process_raw_extraction(raw_extraction)

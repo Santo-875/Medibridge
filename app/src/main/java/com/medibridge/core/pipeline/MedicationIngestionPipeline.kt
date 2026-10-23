@@ -20,7 +20,8 @@ object MedicationIngestionPipeline {
     data class PipelineResultItem(
         val medication: MedicationObject,
         val evaluation: SafetyEvaluationResult,
-        val reconciliation: ReconciledMedication? = null
+        val reconciliation: ReconciledMedication? = null,
+        val printedName: String = ""
     )
 
     suspend fun evaluatePipeline(
@@ -36,18 +37,23 @@ object MedicationIngestionPipeline {
 
         for ((index, candidate) in candidates.withIndex()) {
             val normalizedBase = MedicationNormalizer.extractBaseName(candidate.name)
-            val displayName = if (normalizedBase.isNotEmpty() && !candidate.name.contains(normalizedBase, ignoreCase = true)) {
-                "$normalizedBase (${candidate.name})".trim()
+            val printed = candidate.name.trim()
+            val normalizedTitle = if (normalizedBase.isNotEmpty()) {
+                if (candidate.strength.isNotBlank() && !normalizedBase.contains(candidate.strength, ignoreCase = true)) {
+                    "$normalizedBase ${candidate.strength}".trim()
+                } else {
+                    normalizedBase
+                }
             } else {
-                candidate.name.trim()
+                printed
             }
 
-            val normalizedCandidate = candidate.copy(name = displayName)
+            val normalizedCandidate = candidate.copy(name = normalizedTitle)
             val evaluation = SafetyEngine.evaluateSafety(normalizedCandidate, currentHistory)
             val finalizedMed = evaluation.updatedMedication
             val recon = reconciliationList.getOrNull(index)
 
-            results.add(PipelineResultItem(finalizedMed, evaluation, recon))
+            results.add(PipelineResultItem(finalizedMed, evaluation, recon, printed))
             currentHistory.add(finalizedMed)
         }
 
