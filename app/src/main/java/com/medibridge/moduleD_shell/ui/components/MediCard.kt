@@ -1,15 +1,15 @@
 package com.medibridge.moduleD_shell.ui.components
 
-import androidx.compose.animation.*
-import androidx.compose.animation.core.*
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -17,10 +17,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -29,14 +27,19 @@ import androidx.compose.ui.unit.dp
 import com.medibridge.core.model.MedicationObject
 import com.medibridge.core.theme.*
 
+enum class DoseActionState {
+    NOT_TAKEN, TAKEN, SNOOZED
+}
+
 @Composable
 fun MediCard(
     medication: MedicationObject,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    onTakenClick: (() -> Unit)? = null,
-    onSnoozeClick: (() -> Unit)? = null,
-    isTaken: Boolean = false
+    actionState: DoseActionState = DoseActionState.NOT_TAKEN,
+    onMarkTaken: (() -> Unit)? = null,
+    onSnooze: (() -> Unit)? = null,
+    onMarkNotTaken: (() -> Unit)? = null
 ) {
     val haptic = LocalHapticFeedback.current
     val isDark = isSystemInDarkTheme()
@@ -51,47 +54,27 @@ fun MediCard(
 
     val borderColor by animateColorAsState(
         targetValue = when {
-            isTaken -> if (isDark) StatusVerifiedDark.copy(alpha = 0.45f) else StatusVerified.copy(alpha = 0.35f)
-            medication.conflicts.isNotEmpty() -> if (isDark) StatusConflictDark.copy(alpha = 0.5f) else StatusConflict.copy(alpha = 0.4f)
+            actionState == DoseActionState.TAKEN -> if (isDark) StatusVerifiedDark.copy(alpha = 0.45f) else StatusVerified.copy(alpha = 0.35f)
+            medication.hasRealConflict -> if (isDark) StatusConflictDark.copy(alpha = 0.5f) else StatusConflict.copy(alpha = 0.4f)
             medication.needsVerification && !medication.verifiedByUser -> if (isDark) StatusReviewDark.copy(alpha = 0.45f) else StatusReview.copy(alpha = 0.35f)
-            else -> TealPrimary.copy(alpha = 0.25f)
+            else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)
         },
-        animationSpec = tween(350),
+        animationSpec = tween(300),
         label = "mediCardBorder"
     )
 
     val cardBgColor by animateColorAsState(
-        targetValue = if (isTaken) {
-            if (isDark) Color(0xFF16251E) else Color(0xFFF3FAF6)
-        } else {
-            MaterialTheme.colorScheme.surface
+        targetValue = when (actionState) {
+            DoseActionState.TAKEN -> if (isDark) Color(0xFF16251E) else Color(0xFFF3FAF6)
+            DoseActionState.SNOOZED -> if (isDark) Color(0xFF261D12) else Color(0xFFFFFBEB)
+            DoseActionState.NOT_TAKEN -> MaterialTheme.colorScheme.surface
         },
-        animationSpec = tween(350),
+        animationSpec = tween(300),
         label = "mediCardBg"
     )
 
-    val infiniteTransition = rememberInfiniteTransition(label = "pendingPulse")
-    val pulseAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.3f,
-        targetValue = 0.85f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1100, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "pendingPulseAlpha"
-    )
-    val pulseScale by infiniteTransition.animateFloat(
-        initialValue = 0.95f,
-        targetValue = 1.08f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1100, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "pendingPulseScale"
-    )
-
     val status = when {
-        medication.conflicts.isNotEmpty() -> StatusType.Conflict
+        medication.hasRealConflict -> StatusType.Conflict
         medication.needsVerification && !medication.verifiedByUser -> StatusType.Review
         else -> StatusType.Verified
     }
@@ -110,43 +93,46 @@ fun MediCard(
         shape = RoundedCornerShape(18.dp),
         color = cardBgColor,
         border = BorderStroke(1.2.dp, borderColor),
-        tonalElevation = if (isTaken) 1.dp else 2.dp,
-        shadowElevation = if (isTaken) 0.dp else 1.dp
+        tonalElevation = if (actionState == DoseActionState.TAKEN) 1.dp else 2.dp,
+        shadowElevation = if (actionState == DoseActionState.TAKEN) 0.dp else 1.dp
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp)
+                .padding(20.dp)
         ) {
-            // Header: Icon + Name & Strength + StatusChip
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.Top
             ) {
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = if (isTaken) {
-                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-                    } else {
-                        TealPrimary.copy(alpha = 0.12f)
+                    shape = RoundedCornerShape(14.dp),
+                    color = when (actionState) {
+                        DoseActionState.TAKEN -> (if (isDark) StatusVerifiedDark else StatusVerified).copy(alpha = 0.16f)
+                        DoseActionState.SNOOZED -> (if (isDark) StatusReviewDark else StatusReview).copy(alpha = 0.16f)
+                        DoseActionState.NOT_TAKEN -> TealPrimary.copy(alpha = 0.12f)
                     },
-                    modifier = Modifier.size(46.dp)
+                    modifier = Modifier.size(48.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
-                            imageVector = if (isTaken) Icons.Default.Check else Icons.Default.Medication,
+                            imageVector = when (actionState) {
+                                DoseActionState.TAKEN -> Icons.Default.Check
+                                DoseActionState.SNOOZED -> Icons.Default.Snooze
+                                DoseActionState.NOT_TAKEN -> Icons.Default.Medication
+                            },
                             contentDescription = null,
-                            tint = if (isTaken) {
-                                if (isDark) StatusVerifiedDark else StatusVerified
-                            } else {
-                                TealPrimary
+                            tint = when (actionState) {
+                                DoseActionState.TAKEN -> if (isDark) StatusVerifiedDark else StatusVerified
+                                DoseActionState.SNOOZED -> if (isDark) StatusReviewDark else StatusReview
+                                DoseActionState.NOT_TAKEN -> TealPrimary
                             },
                             modifier = Modifier.size(24.dp)
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.width(12.dp))
+                Spacer(modifier = Modifier.width(14.dp))
 
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
@@ -155,10 +141,16 @@ fun MediCard(
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface
                     )
-                    if (medication.strength.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    val doseText = listOfNotNull(
+                        medication.strength.takeIf { it.isNotBlank() },
+                        medication.dose.takeIf { it.isNotBlank() }
+                    ).joinToString(" • ")
+                    if (doseText.isNotBlank()) {
                         Text(
-                            text = medication.strength,
-                            style = MaterialTheme.typography.bodySmall,
+                            text = doseText,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -169,154 +161,167 @@ fun MediCard(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Dose Indicators & Metadata Chips Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // TAKEN vs PENDING Indicator Badge
-                AnimatedContent(
-                    targetState = isTaken,
-                    transitionSpec = {
-                        (fadeIn(tween(300)) + scaleIn(tween(300))).togetherWith(
-                            fadeOut(tween(200)) + scaleOut(tween(200))
-                        )
-                    },
-                    label = "doseStatusIndicator"
-                ) { taken ->
-                    if (taken) {
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-                            border = BorderStroke(1.dp, (if (isDark) StatusVerifiedDark else StatusVerified).copy(alpha = 0.35f))
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.CheckCircle,
-                                    contentDescription = null,
-                                    tint = if (isDark) StatusVerifiedDark else StatusVerified,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Text(
-                                    text = "Taken Today",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (isDark) StatusVerifiedDark else StatusVerified
-                                )
-                            }
-                        }
-                    } else {
-                        Box(contentAlignment = Alignment.Center) {
-                            Box(
-                                modifier = Modifier
-                                    .matchParentSize()
-                                    .graphicsLayer {
-                                        scaleX = pulseScale
-                                        scaleY = pulseScale
-                                        alpha = pulseAlpha
-                                    }
-                                    .clip(CircleShape)
-                                    .background((if (isDark) StatusReviewDark else StatusReview).copy(alpha = 0.12f))
-                            )
-                            Surface(
-                                shape = CircleShape,
-                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-                                border = BorderStroke(1.dp, (if (isDark) StatusReviewDark else StatusReview).copy(alpha = 0.35f))
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(7.dp)
-                                            .clip(CircleShape)
-                                            .background(if (isDark) StatusReviewDark else StatusReview)
-                                    )
-                                    Text(
-                                        text = "Pending Dose",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (isDark) StatusReviewDark else StatusReview
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
+                val timeLabel = medication.schedule.firstOrNull()?.let { slot ->
+                    "${slot.slot} (${slot.time})"
+                } ?: medication.timing.ifEmpty { medication.frequency }.ifEmpty { "Daily" }
 
-                // Timing / When Pill Chip
                 MetadataPill(
                     icon = Icons.Default.Schedule,
-                    text = medication.timing.ifEmpty { medication.frequency }.ifEmpty { "Daily" }
+                    text = timeLabel
                 )
 
-                // Dose Pill Chip
-                MetadataPill(
-                    icon = Icons.Default.Vaccines,
-                    text = medication.dose.ifEmpty { "1 dose" }
-                )
+                if (medication.duration.isNotBlank()) {
+                    MetadataPill(
+                        icon = Icons.Default.CalendarToday,
+                        text = medication.duration
+                    )
+                }
             }
 
-            // Quick Actions: Taken Toggle & Snooze
-            if (onTakenClick != null || onSnoozeClick != null) {
-                Spacer(modifier = Modifier.height(14.dp))
+            if (onMarkTaken != null || onSnooze != null || onMarkNotTaken != null) {
+                Spacer(modifier = Modifier.height(16.dp))
                 HorizontalDivider(
                     thickness = 0.5.dp,
-                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.14f)
+                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)
                 )
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (onTakenClick != null) {
-                        AnimatedContent(
-                            targetState = isTaken,
-                            modifier = Modifier.weight(1f),
-                            transitionSpec = {
-                                (fadeIn(tween(250)) + slideInVertically()).togetherWith(
-                                    fadeOut(tween(200)) + slideOutVertically()
-                                )
-                            },
-                            label = "takenButtonAnim"
-                        ) { taken ->
-                            if (taken) {
-                                SecondaryButton(
-                                    text = "Taken ✓  (Tap to Undo)",
-                                    icon = Icons.Default.CheckCircle,
-                                    onClick = onTakenClick,
-                                    size = ButtonSize.Small,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            } else {
-                                PrimaryButton(
-                                    text = "Mark as Taken",
-                                    icon = Icons.Default.Check,
-                                    onClick = onTakenClick,
-                                    size = ButtonSize.Small,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
+                    val isTakenSelected = actionState == DoseActionState.TAKEN
+                    val isSnoozedSelected = actionState == DoseActionState.SNOOZED
+                    val isNotTakenSelected = actionState == DoseActionState.NOT_TAKEN
+
+                    val takenScale by animateFloatAsState(if (isTakenSelected) 1.02f else 1.0f, label = "takenScale")
+                    val snoozeScale by animateFloatAsState(if (isSnoozedSelected) 1.02f else 1.0f, label = "snoozeScale")
+                    val notTakenScale by animateFloatAsState(if (isNotTakenSelected) 1.02f else 1.0f, label = "notTakenScale")
+
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isTakenSelected) {
+                            if (isDark) StatusVerifiedBgDark else StatusVerifiedBg
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                        },
+                        border = BorderStroke(
+                            1.dp,
+                            if (isTakenSelected) (if (isDark) StatusVerifiedDark else StatusVerified) else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .scale(takenScale)
+                            .clickable(enabled = onMarkTaken != null) {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onMarkTaken?.invoke()
                             }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(vertical = 10.dp, horizontal = 4.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = null,
+                                tint = if (isTakenSelected) (if (isDark) StatusVerifiedDark else StatusVerified) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                text = "Taken",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = if (isTakenSelected) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isTakenSelected) (if (isDark) StatusVerifiedDark else StatusVerified) else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
 
-                    if (onSnoozeClick != null && !isTaken) {
-                        SecondaryButton(
-                            text = "Snooze",
-                            icon = Icons.Default.Snooze,
-                            onClick = onSnoozeClick,
-                            size = ButtonSize.Small,
-                            modifier = Modifier.weight(0.5f)
-                        )
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isSnoozedSelected) {
+                            if (isDark) StatusReviewBgDark else StatusReviewBg
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                        },
+                        border = BorderStroke(
+                            1.dp,
+                            if (isSnoozedSelected) (if (isDark) StatusReviewDark else StatusReview) else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .scale(snoozeScale)
+                            .clickable(enabled = onSnooze != null) {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onSnooze?.invoke()
+                            }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(vertical = 10.dp, horizontal = 4.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Snooze,
+                                contentDescription = null,
+                                tint = if (isSnoozedSelected) (if (isDark) StatusReviewDark else StatusReview) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                text = "Snooze",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = if (isSnoozedSelected) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isSnoozedSelected) (if (isDark) StatusReviewDark else StatusReview) else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isNotTakenSelected) {
+                            MaterialTheme.colorScheme.surfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                        },
+                        border = BorderStroke(
+                            1.dp,
+                            if (isNotTakenSelected) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .scale(notTakenScale)
+                            .clickable(enabled = onMarkNotTaken != null) {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onMarkNotTaken?.invoke()
+                            }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(vertical = 10.dp, horizontal = 4.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = null,
+                                tint = if (isNotTakenSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                text = "Not Taken",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = if (isNotTakenSelected) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isNotTakenSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }

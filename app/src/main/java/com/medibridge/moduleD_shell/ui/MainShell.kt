@@ -65,6 +65,7 @@ fun MainShell(
         Screen.Scanner.route,
         Screen.Recording.route,
         Screen.AddEditMedication.route,
+        Screen.MedicationDetail.route,
         Screen.SafetyDashboard.route,
         Screen.ConsultationRecordings.route,
         Screen.PrescriptionArchive.route

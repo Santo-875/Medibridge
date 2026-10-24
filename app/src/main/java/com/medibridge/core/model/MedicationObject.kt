@@ -176,7 +176,10 @@ data class MedicationObject(
     val updatedAt: Long = System.currentTimeMillis(),
     val deletedAt: Long? = null,
     val synced: Boolean = false
-)
+) {
+    val hasRealConflict: Boolean
+        get() = conflicts.any { it.type == "interaction" || it.type == "duplicate" || it.type == "overlap" }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Extension functions — convert between domain object ↔ Room entity

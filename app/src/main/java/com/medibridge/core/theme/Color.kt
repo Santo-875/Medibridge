@@ -36,7 +36,7 @@ val StatusConflictBg  = Color(0xFFFEE2E2)   // Red 100
 val StatusVerifiedDark   = Color(0xFF4ADE80)   // Green 400
 val StatusVerifiedBgDark = Color(0xFF14532D)   // Green 900
 val StatusReviewDark     = Color(0xFFFBBF24)   // Amber 400
-val StatusReviewBgDark   = Color(0xFF78350F)   // Amber 900
+val StatusReviewBgDark   = Color(0xFF4A2500)   // Rich dark amber
 val StatusConflictDark   = Color(0xFFF87171)   // Red 400
 val StatusConflictBgDark = Color(0xFF7F1D1D)   // Red 900
 

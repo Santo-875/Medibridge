@@ -17,7 +17,12 @@ sealed class Screen(val route: String) {
     object Profile           : Screen("profile")
     val Settings: Screen get() = Profile
     object SafetyDashboard   : Screen("safety_dashboard")
-    object AddEditMedication : Screen("add_edit_medication")
+    object AddEditMedication : Screen("add_edit_medication?medId={medId}") {
+        fun createRoute(medId: String? = null) = if (!medId.isNullOrEmpty()) "add_edit_medication?medId=$medId" else "add_edit_medication"
+    }
+    object MedicationDetail  : Screen("medication_detail/{medicationId}") {
+        fun createRoute(medicationId: String) = "medication_detail/$medicationId"
+    }
     object ConsultationRecordings : Screen("consultation_recordings")
     object PrescriptionArchive : Screen("prescription_archive")
 }

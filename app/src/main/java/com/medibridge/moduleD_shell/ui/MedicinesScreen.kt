@@ -55,9 +55,9 @@ fun MedicinesScreen(
 
             val matchesFilter = when (selectedFilter) {
                 MedicineFilter.ALL -> true
-                MedicineFilter.VERIFIED -> med.conflicts.isEmpty() && (!med.needsVerification || med.verifiedByUser)
+                MedicineFilter.VERIFIED -> !med.hasRealConflict && (!med.needsVerification || med.verifiedByUser)
                 MedicineFilter.REVIEW -> med.needsVerification && !med.verifiedByUser
-                MedicineFilter.CONFLICT -> med.conflicts.isNotEmpty()
+                MedicineFilter.CONFLICT -> med.hasRealConflict
             }
             matchesQuery && matchesFilter
         }
@@ -74,6 +74,13 @@ fun MedicinesScreen(
                     )
                 },
                 actions = {
+                    IconButton(onClick = onAddClick) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "Add medication",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
                     IconButton(onClick = onRemindersClick) {
                         Icon(
                             imageVector = Icons.Default.NotificationsActive,
@@ -155,8 +162,8 @@ fun MedicinesScreen(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            val takenMedIds = remember { mutableStateMapOf<String, Boolean>() }
-            val takenCount = medications.count { takenMedIds[it.id] == true }
+            val actionStates = remember { mutableStateMapOf<String, DoseActionState>() }
+            val takenCount = medications.count { actionStates[it.id] == DoseActionState.TAKEN }
             val totalCount = medications.size
             val adherencePercent = if (totalCount > 0) (takenCount.toFloat() / totalCount.toFloat()) else 0f
             val animatedProgress by animateFloatAsState(
@@ -253,29 +260,30 @@ fun MedicinesScreen(
             } else {
                 LazyColumn(
                     modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
                     contentPadding = PaddingValues(bottom = 90.dp, top = 4.dp)
                 ) {
                     items(
                         items = filteredMeds,
                         key = { it.id }
                     ) { med ->
-                        val isTaken = takenMedIds[med.id] == true
+                        val currentAction = actionStates[med.id] ?: DoseActionState.NOT_TAKEN
 
                         MediCard(
                             medication = med,
                             onClick = { onMedicationClick(med.id) },
-                            onTakenClick = {
-                                val nextState = !isTaken
-                                takenMedIds[med.id] = nextState
-                                if (nextState) {
-                                    scheduleViewModel.markTaken("${med.id}_08:00_today", med.name, med.dose)
-                                }
+                            actionState = currentAction,
+                            onMarkTaken = {
+                                actionStates[med.id] = DoseActionState.TAKEN
+                                scheduleViewModel.markTaken("${med.id}_08:00_today", med.name, med.dose)
                             },
-                            onSnoozeClick = {
+                            onSnooze = {
+                                actionStates[med.id] = DoseActionState.SNOOZED
                                 scheduleViewModel.snooze("${med.id}_08:00_today", 15)
                             },
-                            isTaken = isTaken
+                            onMarkNotTaken = {
+                                actionStates[med.id] = DoseActionState.NOT_TAKEN
+                            }
                         )
                     }
                 }

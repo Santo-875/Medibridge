@@ -7,6 +7,8 @@ import androidx.compose.runtime.Composable
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.NavType
+import androidx.navigation.navArgument
 import com.medibridge.moduleB_safety.ui.SafetyScreen
 import com.medibridge.moduleD_shell.ui.*
 import com.medibridge.moduleD_shell.viewmodel.SettingsViewModel
@@ -110,10 +112,10 @@ fun MediBridgeNavGraph(
         composable(Screen.Medicines.route) {
             MedicinesScreen(
                 onMedicationClick = { medId ->
-                    navController.navigate(Screen.AddEditMedication.route)
+                    navController.navigate(Screen.MedicationDetail.createRoute(medId))
                 },
                 onRemindersClick = { navController.navigate(Screen.Reminders.route) },
-                onAddClick = { navController.navigate(Screen.Scanner.route) }
+                onAddClick = { navController.navigate(Screen.AddEditMedication.createRoute()) }
             )
         }
 
@@ -213,13 +215,44 @@ fun MediBridgeNavGraph(
         // Detail Slide Screen: Add / Edit Medication
         composable(
             route = Screen.AddEditMedication.route,
+            arguments = listOf(
+                navArgument("medId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                }
+            ),
             enterTransition = { slideIntoContainer(SlideDirection.Start, tween(280)) },
             exitTransition = { slideOutOfContainer(SlideDirection.Start, tween(280)) },
             popEnterTransition = { slideIntoContainer(SlideDirection.End, tween(280)) },
             popExitTransition = { slideOutOfContainer(SlideDirection.End, tween(280)) }
-        ) {
+        ) { backStackEntry ->
+            val medId = backStackEntry.arguments?.getString("medId")
             AddEditMedicationScreen(
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                medicationId = medId
+            )
+        }
+
+        composable(
+            route = Screen.MedicationDetail.route,
+            arguments = listOf(
+                navArgument("medicationId") {
+                    type = NavType.StringType
+                }
+            ),
+            enterTransition = { slideIntoContainer(SlideDirection.Start, tween(280)) },
+            exitTransition = { slideOutOfContainer(SlideDirection.Start, tween(280)) },
+            popEnterTransition = { slideIntoContainer(SlideDirection.End, tween(280)) },
+            popExitTransition = { slideOutOfContainer(SlideDirection.End, tween(280)) }
+        ) { backStackEntry ->
+            val medicationId = backStackEntry.arguments?.getString("medicationId") ?: ""
+            MedicationDetailScreen(
+                medicationId = medicationId,
+                onBack = { navController.popBackStack() },
+                onEditClick = { medId ->
+                    navController.navigate(Screen.AddEditMedication.createRoute(medId))
+                }
             )
         }
 

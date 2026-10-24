@@ -18,13 +18,17 @@ import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -50,6 +54,7 @@ import com.medibridge.core.network.BackendClient
 import com.medibridge.core.pipeline.MedicationIngestionPipeline
 import com.medibridge.core.theme.*
 import com.medibridge.moduleB_safety.logic.SafetyVerdict
+import com.medibridge.moduleB_safety.logic.SafetyEvaluationResult
 import com.medibridge.moduleD_shell.ui.components.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -69,6 +74,8 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.sp
+import androidx.compose.animation.animateContentSize
+import androidx.compose.ui.text.style.TextOverflow
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
@@ -864,194 +871,235 @@ private fun ViewfinderOverlay(modifier: Modifier = Modifier) {
     }
 }
 
+enum class ItemReviewState {
+    UNREVIEWED, CONFIRMED, EDITED, DISCARDED
+}
+
 @Composable
 private fun ReviewScreenContent(
     pkg: ScannedPrescriptionPackage,
     onSave: (ScannedPrescriptionPackage) -> Unit,
     onRetake: () -> Unit
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
+    var snackbarJob by remember { mutableStateOf<Job?>(null) }
+    val listState = rememberLazyListState()
+    val isDark = isSystemInDarkTheme()
+
     var reviewPkg by remember(pkg) { mutableStateOf(pkg) }
-    var checkedItemIds by remember(pkg) {
-        mutableStateOf(
-            pkg.items.filter { item ->
-                item.medication.confidence >= 0.70f && !item.medication.needsVerification
-            }.map { it.medication.id }.toSet()
-        )
+
+    val initialReviewStates = remember(pkg) {
+        pkg.items.associate { item ->
+            val med = item.medication
+            val recon = item.reconciliation
+            val isLow = med.confidence < 0.70f || med.needsVerification || recon?.requiresVerification == true
+            item.medication.id to if (isLow) ItemReviewState.UNREVIEWED else ItemReviewState.CONFIRMED
+        }.toMutableMap()
     }
+    var reviewStates by remember(pkg) { mutableStateOf(initialReviewStates) }
+    var previousStatesBeforeDiscard by remember { mutableStateOf(mapOf<String, ItemReviewState>()) }
+    var editingItemIds by remember { mutableStateOf(setOf<String>()) }
+    var justConfirmedId by remember { mutableStateOf<String?>(null) }
+    var showUnreviewedDialog by remember { mutableStateOf(false) }
     var showFullImageDialog by remember { mutableStateOf(false) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp)
-    ) {
-        SectionHeader(
-            title = "Verify Prescription",
-            badgeCount = reviewPkg.items.size,
-            actionLabel = "Retake",
-            onActionClick = onRetake
-        )
+    LaunchedEffect(justConfirmedId) {
+        if (justConfirmedId != null) {
+            kotlinx.coroutines.delay(450)
+            justConfirmedId = null
+        }
+    }
 
-        LazyColumn(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-            contentPadding = PaddingValues(vertical = 8.dp)
+    val visibleItems = reviewPkg.items.filter { reviewStates[it.medication.id] != ItemReviewState.DISCARDED }
+    val readyItems = visibleItems.filter {
+        val s = reviewStates[it.medication.id]
+        s == ItemReviewState.CONFIRMED || s == ItemReviewState.EDITED
+    }
+    val unreviewedItems = visibleItems.filter { reviewStates[it.medication.id] == ItemReviewState.UNREVIEWED }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp)
         ) {
-            if (reviewPkg.imageFile?.exists() == true) {
-                item {
-                    val bitmap = remember(reviewPkg.imageFile) {
-                        BitmapFactory.decodeFile(reviewPkg.imageFile!!.absolutePath)
+            SectionHeader(
+                title = "Verify Prescription",
+                badgeCount = visibleItems.size,
+                actionLabel = "Retake",
+                onActionClick = onRetake
+            )
+
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+                contentPadding = PaddingValues(vertical = 8.dp)
+            ) {
+                if (reviewPkg.imageFile?.exists() == true) {
+                    item {
+                        val bitmap = remember(reviewPkg.imageFile) {
+                            BitmapFactory.decodeFile(reviewPkg.imageFile!!.absolutePath)
+                        }
+                        if (bitmap != null) {
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { showFullImageDialog = true },
+                                shape = RoundedCornerShape(14.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Image(
+                                        bitmap = bitmap.asImageBitmap(),
+                                        contentDescription = "Prescription thumbnail",
+                                        modifier = Modifier
+                                            .size(64.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                    )
+                                    Spacer(Modifier.width(12.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "Original Prescription Photo",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            text = "Tap to view & zoom document",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                    Icon(
+                                        imageVector = Icons.Default.ZoomIn,
+                                        contentDescription = "Zoom",
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                        }
                     }
-                    if (bitmap != null) {
+                }
+
+                item {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                text = "Prescription Details",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedTextField(
+                                    value = reviewPkg.doctorName,
+                                    onValueChange = { reviewPkg = reviewPkg.copy(doctorName = it) },
+                                    label = { Text("Prescribed By") },
+                                    modifier = Modifier.weight(1f),
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(10.dp)
+                                )
+                                OutlinedTextField(
+                                    value = reviewPkg.clinicName,
+                                    onValueChange = { reviewPkg = reviewPkg.copy(clinicName = it) },
+                                    label = { Text("Clinic / Hospital") },
+                                    modifier = Modifier.weight(1f),
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(10.dp)
+                                )
+                            }
+                            if (reviewPkg.remarks.isNotBlank()) {
+                                OutlinedTextField(
+                                    value = reviewPkg.remarks,
+                                    onValueChange = { reviewPkg = reviewPkg.copy(remarks = it) },
+                                    label = { Text("Clinical Notes / Remarks") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(10.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if (reviewPkg.supplies.isNotEmpty()) {
+                    item {
+                        var suppliesExpanded by remember { mutableStateOf(false) }
                         Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { showFullImageDialog = true },
+                                .clip(RoundedCornerShape(14.dp))
+                                .clickable { suppliesExpanded = !suppliesExpanded },
                             shape = RoundedCornerShape(14.dp),
                             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
                         ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Image(
-                                    bitmap = bitmap.asImageBitmap(),
-                                    contentDescription = "Prescription thumbnail",
-                                    modifier = Modifier
-                                        .size(64.dp)
-                                        .clip(RoundedCornerShape(8.dp))
-                                )
-                                Spacer(Modifier.width(12.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "Original Prescription Photo",
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text(
-                                        text = "Tap to view & zoom document",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                                Icon(
-                                    imageVector = Icons.Default.ZoomIn,
-                                    contentDescription = "Zoom",
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            item {
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(14.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
-                ) {
-                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = "Prescription Details",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedTextField(
-                                value = reviewPkg.doctorName,
-                                onValueChange = { reviewPkg = reviewPkg.copy(doctorName = it) },
-                                label = { Text("Prescribed By") },
-                                modifier = Modifier.weight(1f),
-                                singleLine = true,
-                                shape = RoundedCornerShape(10.dp)
-                            )
-                            OutlinedTextField(
-                                value = reviewPkg.clinicName,
-                                onValueChange = { reviewPkg = reviewPkg.copy(clinicName = it) },
-                                label = { Text("Clinic / Hospital") },
-                                modifier = Modifier.weight(1f),
-                                singleLine = true,
-                                shape = RoundedCornerShape(10.dp)
-                            )
-                        }
-                        if (reviewPkg.remarks.isNotBlank()) {
-                            OutlinedTextField(
-                                value = reviewPkg.remarks,
-                                onValueChange = { reviewPkg = reviewPkg.copy(remarks = it) },
-                                label = { Text("Clinical Notes / Remarks") },
-                                modifier = Modifier.fillMaxWidth(),
-                                singleLine = true,
-                                shape = RoundedCornerShape(10.dp)
-                            )
-                        }
-                    }
-                }
-            }
-
-            if (reviewPkg.supplies.isNotEmpty()) {
-                item {
-                    var suppliesExpanded by remember { mutableStateOf(false) }
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .clickable { suppliesExpanded = !suppliesExpanded },
-                        shape = RoundedCornerShape(14.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-                    ) {
-                        Column(modifier = Modifier.padding(14.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        imageVector = Icons.Default.MedicalServices,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(
-                                        text = "Medical Supplies (${reviewPkg.supplies.size})",
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                                Icon(
-                                    imageVector = if (suppliesExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                                    contentDescription = if (suppliesExpanded) "Collapse" else "Expand"
-                                )
-                            }
-                            if (suppliesExpanded) {
-                                Spacer(Modifier.height(8.dp))
-                                reviewPkg.supplies.forEach { supply ->
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 4.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = "• ${supply.name}",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.onSurface
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.MedicalServices,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(20.dp)
                                         )
-                                        if (!supply.quantity.isNullOrBlank()) {
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(
+                                            text = "Medical Supplies (${reviewPkg.supplies.size})",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                    Icon(
+                                        imageVector = if (suppliesExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                        contentDescription = if (suppliesExpanded) "Collapse" else "Expand"
+                                    )
+                                }
+                                if (suppliesExpanded) {
+                                    Spacer(Modifier.height(8.dp))
+                                    reviewPkg.supplies.forEach { supply ->
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 4.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
                                             Text(
-                                                text = "Qty: ${supply.quantity}",
-                                                style = MaterialTheme.typography.labelMedium,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                text = "• ${supply.name}",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f, fill = false)
                                             )
+                                            if (!supply.quantity.isNullOrBlank()) {
+                                                Spacer(Modifier.width(8.dp))
+                                                Text(
+                                                    text = "Qty: ${supply.quantity}",
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 1,
+                                                    modifier = Modifier.widthIn(min = 60.dp)
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -1059,54 +1107,68 @@ private fun ReviewScreenContent(
                         }
                     }
                 }
-            }
 
-            itemsIndexed(reviewPkg.items) { index, item ->
-                val med = item.medication
-                val recon = item.reconciliation
-                val isUncertain = med.confidence < 0.70f || med.needsVerification || recon?.requiresVerification == true
+                items(
+                    items = visibleItems,
+                    key = { it.medication.id }
+                ) { item ->
+                    val med = item.medication
+                    val state = reviewStates[med.id] ?: ItemReviewState.UNREVIEWED
+                    val isEditing = editingItemIds.contains(med.id)
+                    val isPulsing = justConfirmedId == med.id
 
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(
-                        if (isUncertain) 1.5.dp else 1.dp,
-                        if (isUncertain) StatusReview else MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)
+                    val cardBg by animateColorAsState(
+                        targetValue = if (isPulsing) {
+                            if (isDark) StatusVerifiedBgDark else StatusVerifiedBg
+                        } else {
+                            MaterialTheme.colorScheme.surface
+                        },
+                        animationSpec = tween(durationMillis = 350),
+                        label = "cardPulse"
                     )
-                ) {
-                    Column(
+
+                    val cardBorder = when (state) {
+                        ItemReviewState.UNREVIEWED -> BorderStroke(1.5.dp, if (isDark) StatusReviewDark else StatusReview)
+                        ItemReviewState.CONFIRMED -> BorderStroke(1.dp, if (isDark) StatusVerifiedDark.copy(alpha = 0.4f) else StatusVerified.copy(alpha = 0.4f))
+                        ItemReviewState.EDITED -> BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
+                        ItemReviewState.DISCARDED -> BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
+                    }
+
+                    Surface(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(16.dp)
+                            .animateContentSize(),
+                        shape = RoundedCornerShape(16.dp),
+                        color = cardBg,
+                        border = cardBorder
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(20.dp)
                         ) {
                             Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.Top
                             ) {
-                                Checkbox(
-                                    checked = checkedItemIds.contains(med.id),
-                                    onCheckedChange = { checked ->
-                                        checkedItemIds = if (checked) checkedItemIds + med.id else checkedItemIds - med.id
-                                    }
-                                )
-                                Column(modifier = Modifier.padding(start = 4.dp)) {
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f, fill = false)
+                                        .padding(end = 8.dp)
+                                ) {
                                     val titleText = if (med.strength.isNotBlank() && !med.name.contains(med.strength, ignoreCase = true)) {
                                         "${med.name} ${med.strength}".trim()
                                     } else {
                                         med.name.trim()
                                     }
                                     Text(
-                                        text = titleText.ifBlank { "Item #${index + 1}" },
+                                        text = titleText.ifBlank { "Untitled Medicine" },
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onSurface
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                     val printedSub = item.printedName.takeIf { it.isNotBlank() }
                                         ?: med.summary.removePrefix("Prescribed: ").trim()
@@ -1114,201 +1176,590 @@ private fun ReviewScreenContent(
                                         Text(
                                             text = printedSub,
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    ConfidenceBadge(confidence = med.confidence)
+
+                                    when (state) {
+                                        ItemReviewState.UNREVIEWED -> {
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = if (isDark) StatusReviewBgDark else StatusReviewBg
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Warning,
+                                                        contentDescription = null,
+                                                        tint = if (isDark) StatusReviewDark else StatusReview,
+                                                        modifier = Modifier.size(12.dp)
+                                                    )
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text(
+                                                        text = "Needs review",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = if (isDark) StatusReviewDark else StatusReview
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        ItemReviewState.CONFIRMED -> {
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = if (isDark) StatusVerifiedBgDark else StatusVerifiedBg
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.CheckCircle,
+                                                        contentDescription = null,
+                                                        tint = if (isDark) StatusVerifiedDark else StatusVerified,
+                                                        modifier = Modifier.size(12.dp)
+                                                    )
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text(
+                                                        text = "Confirmed",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = if (isDark) StatusVerifiedDark else StatusVerified
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        ItemReviewState.EDITED -> {
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = MaterialTheme.colorScheme.primaryContainer
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Edit,
+                                                        contentDescription = null,
+                                                        tint = MaterialTheme.colorScheme.primary,
+                                                        modifier = Modifier.size(12.dp)
+                                                    )
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text(
+                                                        text = "Edited",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        ItemReviewState.DISCARDED -> Unit
+                                    }
+                                }
+                            }
+
+                            if (state == ItemReviewState.UNREVIEWED && (med.confidence < 0.70f || med.needsVerification)) {
+                                Spacer(Modifier.height(10.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isDark) StatusReviewBgDark else StatusReviewBg,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Warning,
+                                            contentDescription = null,
+                                            tint = if (isDark) StatusReviewDark else StatusReview,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(
+                                            text = if (med.confidence < 0.70f) "Low Confidence (<70%) - Please verify details against the prescription photo." else "Unverified - Please verify details against the prescription photo.",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurface
                                         )
                                     }
                                 }
                             }
 
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                                ConfidenceBadge(confidence = med.confidence)
+                            Spacer(modifier = Modifier.height(12.dp))
 
-                                val isVerified = med.confidence >= 0.70f && !med.needsVerification
-                                StatusChip(
-                                    status = if (isVerified) StatusType.Verified else StatusType.Review,
-                                    customLabel = if (isVerified) "VERIFIED" else "UNVERIFIED"
-                                )
-
-                                IconButton(
-                                    onClick = {
-                                        reviewPkg = reviewPkg.copy(items = reviewPkg.items.filter { it.medication.id != med.id })
-                                        checkedItemIds = checkedItemIds - med.id
-                                    },
-                                    modifier = Modifier.size(32.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.DeleteOutline,
-                                        contentDescription = "Remove item",
-                                        tint = MaterialTheme.colorScheme.error,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
-                        }
-
-                        if (isUncertain) {
-                            Spacer(Modifier.height(8.dp))
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = StatusReviewBg,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
+                            if (!isEditing) {
                                 Row(
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Warning,
-                                        contentDescription = null,
-                                        tint = StatusReview,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(Modifier.width(8.dp))
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                                    ) {
+                                        Text(
+                                            text = med.dose.ifBlank { "1 dose" },
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                                    ) {
+                                        Text(
+                                            text = med.frequency.ifBlank { "Daily" },
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    if (med.timing.isNotBlank()) {
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                                        ) {
+                                            Text(
+                                                text = med.timing,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                                style = MaterialTheme.typography.labelMedium,
+                                                fontWeight = FontWeight.Medium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                }
+                                if (med.duration.isNotBlank()) {
+                                    Spacer(modifier = Modifier.height(6.dp))
                                     Text(
-                                        text = if (med.confidence < 0.70f) "Low Confidence (<70%) - Please verify details against the prescription photo." else "Unverified - Please verify details against the prescription photo.",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurface
+                                        text = "Duration: ${med.duration}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
+                                }
+                            } else {
+                                OutlinedTextField(
+                                    value = med.name,
+                                    onValueChange = { newName ->
+                                        val idx = reviewPkg.items.indexOfFirst { it.medication.id == med.id }
+                                        if (idx != -1) {
+                                            val updatedItems = reviewPkg.items.toMutableList()
+                                            val updatedMed = med.copy(name = newName)
+                                            updatedItems[idx] = updatedItems[idx].copy(medication = updatedMed)
+                                            reviewPkg = reviewPkg.copy(items = updatedItems)
+                                            reviewStates = reviewStates.toMutableMap().apply { put(med.id, ItemReviewState.EDITED) }
+                                        }
+                                    },
+                                    label = { Text("Medicine Name") },
+                                    placeholder = { Text("Enter medicine name") },
+                                    isError = med.name.isBlank(),
+                                    supportingText = if (med.name.isBlank()) { { Text("Required", color = MaterialTheme.colorScheme.error) } } else null,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    OutlinedTextField(
+                                        value = med.strength,
+                                        onValueChange = { newStrength ->
+                                            val idx = reviewPkg.items.indexOfFirst { it.medication.id == med.id }
+                                            if (idx != -1) {
+                                                val updatedItems = reviewPkg.items.toMutableList()
+                                                val updatedMed = med.copy(strength = newStrength)
+                                                updatedItems[idx] = updatedItems[idx].copy(medication = updatedMed)
+                                                reviewPkg = reviewPkg.copy(items = updatedItems)
+                                                reviewStates = reviewStates.toMutableMap().apply { put(med.id, ItemReviewState.EDITED) }
+                                            }
+                                        },
+                                        label = { Text("Strength") },
+                                        placeholder = { Text("e.g. 500mg") },
+                                        modifier = Modifier.weight(1f),
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(12.dp)
+                                    )
+
+                                    OutlinedTextField(
+                                        value = med.dose,
+                                        onValueChange = { newDose ->
+                                            val idx = reviewPkg.items.indexOfFirst { it.medication.id == med.id }
+                                            if (idx != -1) {
+                                                val updatedItems = reviewPkg.items.toMutableList()
+                                                val updatedMed = med.copy(dose = newDose)
+                                                updatedItems[idx] = updatedItems[idx].copy(medication = updatedMed)
+                                                reviewPkg = reviewPkg.copy(items = updatedItems)
+                                                reviewStates = reviewStates.toMutableMap().apply { put(med.id, ItemReviewState.EDITED) }
+                                            }
+                                        },
+                                        label = { Text("Dose") },
+                                        placeholder = { Text("e.g. 1 tab") },
+                                        modifier = Modifier.weight(1f),
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(12.dp)
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    OutlinedTextField(
+                                        value = med.frequency,
+                                        onValueChange = { newFreq ->
+                                            val idx = reviewPkg.items.indexOfFirst { it.medication.id == med.id }
+                                            if (idx != -1) {
+                                                val updatedItems = reviewPkg.items.toMutableList()
+                                                val updatedMed = med.copy(frequency = newFreq)
+                                                updatedItems[idx] = updatedItems[idx].copy(medication = updatedMed)
+                                                reviewPkg = reviewPkg.copy(items = updatedItems)
+                                                reviewStates = reviewStates.toMutableMap().apply { put(med.id, ItemReviewState.EDITED) }
+                                            }
+                                        },
+                                        label = { Text("Frequency") },
+                                        placeholder = { Text("e.g. Twice daily") },
+                                        modifier = Modifier.weight(1f),
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(12.dp)
+                                    )
+
+                                    OutlinedTextField(
+                                        value = med.duration,
+                                        onValueChange = { newDuration ->
+                                            val idx = reviewPkg.items.indexOfFirst { it.medication.id == med.id }
+                                            if (idx != -1) {
+                                                val updatedItems = reviewPkg.items.toMutableList()
+                                                val updatedMed = med.copy(duration = newDuration)
+                                                updatedItems[idx] = updatedItems[idx].copy(medication = updatedMed)
+                                                reviewPkg = reviewPkg.copy(items = updatedItems)
+                                                reviewStates = reviewStates.toMutableMap().apply { put(med.id, ItemReviewState.EDITED) }
+                                            }
+                                        },
+                                        label = { Text("Duration") },
+                                        placeholder = { Text("e.g. 5 days") },
+                                        modifier = Modifier.weight(1f),
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(12.dp)
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                OutlinedTextField(
+                                    value = med.timing,
+                                    onValueChange = { newTiming ->
+                                        val idx = reviewPkg.items.indexOfFirst { it.medication.id == med.id }
+                                        if (idx != -1) {
+                                            val updatedItems = reviewPkg.items.toMutableList()
+                                            val updatedMed = med.copy(timing = newTiming)
+                                            updatedItems[idx] = updatedItems[idx].copy(medication = updatedMed)
+                                            reviewPkg = reviewPkg.copy(items = updatedItems)
+                                            reviewStates = reviewStates.toMutableMap().apply { put(med.id, ItemReviewState.EDITED) }
+                                        }
+                                    },
+                                    label = { Text("Instructions / Meal Relation") },
+                                    placeholder = { Text("e.g. After food") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(16.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (state == ItemReviewState.CONFIRMED) {
+                                    FilledTonalButton(
+                                        onClick = {
+                                            reviewStates = reviewStates.toMutableMap().apply { put(med.id, ItemReviewState.CONFIRMED) }
+                                            editingItemIds = editingItemIds - med.id
+                                            justConfirmedId = med.id
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                        shape = RoundedCornerShape(10.dp),
+                                        colors = ButtonDefaults.filledTonalButtonColors(
+                                            containerColor = if (isDark) StatusVerifiedBgDark else StatusVerifiedBg,
+                                            contentColor = if (isDark) StatusVerifiedDark else StatusVerified
+                                        ),
+                                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
+                                    ) {
+                                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Confirmed", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                                    }
+                                } else {
+                                    OutlinedButton(
+                                        onClick = {
+                                            reviewStates = reviewStates.toMutableMap().apply { put(med.id, ItemReviewState.CONFIRMED) }
+                                            editingItemIds = editingItemIds - med.id
+                                            justConfirmedId = med.id
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                        shape = RoundedCornerShape(10.dp),
+                                        border = BorderStroke(1.dp, if (isDark) StatusVerifiedDark.copy(alpha = 0.5f) else StatusVerified.copy(alpha = 0.5f)),
+                                        colors = ButtonDefaults.outlinedButtonColors(
+                                            contentColor = if (isDark) StatusVerifiedDark else StatusVerified
+                                        ),
+                                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
+                                    ) {
+                                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Confirm", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                                    }
+                                }
+
+                                if (isEditing) {
+                                    FilledTonalButton(
+                                        onClick = {
+                                            editingItemIds = editingItemIds - med.id
+                                            reviewStates = reviewStates.toMutableMap().apply { put(med.id, ItemReviewState.EDITED) }
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                        shape = RoundedCornerShape(10.dp),
+                                        colors = ButtonDefaults.filledTonalButtonColors(
+                                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                        ),
+                                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
+                                    ) {
+                                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Done", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                                    }
+                                } else {
+                                    OutlinedButton(
+                                        onClick = {
+                                            editingItemIds = editingItemIds + med.id
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                        shape = RoundedCornerShape(10.dp),
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+                                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
+                                    ) {
+                                        Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(if (state == ItemReviewState.EDITED) "Edit" else "Edit", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                                    }
+                                }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        val prevState = reviewStates[med.id] ?: ItemReviewState.UNREVIEWED
+                                        previousStatesBeforeDiscard = previousStatesBeforeDiscard + (med.id to prevState)
+                                        reviewStates = reviewStates.toMutableMap().apply { put(med.id, ItemReviewState.DISCARDED) }
+                                        editingItemIds = editingItemIds - med.id
+                                        scope.launch {
+                                            snackbarJob?.cancel()
+                                            snackbarJob = launch {
+                                                val result = snackbarHostState.showSnackbar(
+                                                    message = "Medicine removed",
+                                                    actionLabel = "Undo",
+                                                    duration = SnackbarDuration.Short
+                                                )
+                                                if (result == SnackbarResult.ActionPerformed) {
+                                                    val restored = previousStatesBeforeDiscard[med.id] ?: ItemReviewState.UNREVIEWED
+                                                    reviewStates = reviewStates.toMutableMap().apply { put(med.id, restored) }
+                                                }
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(10.dp),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.35f)),
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        contentColor = MaterialTheme.colorScheme.error
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
+                                ) {
+                                    Icon(Icons.Default.DeleteOutline, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Discard", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
                                 }
                             }
                         }
+                    }
+                }
 
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        OutlinedTextField(
-                            value = med.name,
-                            onValueChange = { newName ->
-                                val updatedItems = reviewPkg.items.toMutableList()
-                                val updatedMed = med.copy(name = newName)
-                                updatedItems[index] = updatedItems[index].copy(medication = updatedMed)
-                                reviewPkg = reviewPkg.copy(items = updatedItems)
+                item {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .clickable {
+                                val newId = UUID.randomUUID().toString()
+                                val newMed = MedicationObject(
+                                    id = newId,
+                                    name = "",
+                                    strength = "",
+                                    dose = "1 tablet",
+                                    frequency = "Once daily",
+                                    timing = "After food",
+                                    duration = "30 days",
+                                    confidence = 1.0f,
+                                    needsVerification = false,
+                                    verifiedByUser = true,
+                                    crossVerified = true,
+                                    conflicts = emptyList(),
+                                    reviewRecommended = false,
+                                    schedule = emptyList(),
+                                    adherence = emptyList(),
+                                    summary = "",
+                                    sideEffects = emptyList(),
+                                    visibleTo = listOf("patient", "caregiver", "doctor"),
+                                    sourceType = "manual"
+                                )
+                                val newResultItem = MedicationIngestionPipeline.PipelineResultItem(
+                                    medication = newMed,
+                                    evaluation = SafetyEvaluationResult(
+                                        updatedMedication = newMed,
+                                        verdict = SafetyVerdict.SAFE,
+                                        headline = "Manual Entry",
+                                        summary = "Manually entered medication",
+                                        conflicts = emptyList<com.medibridge.core.model.MedicationConflict>(),
+                                        crossVerified = true,
+                                        reviewRecommended = false
+                                    ),
+                                    reconciliation = null,
+                                    printedName = ""
+                                )
+                                reviewPkg = reviewPkg.copy(items = reviewPkg.items + newResultItem)
+                                reviewStates = reviewStates.toMutableMap().apply { put(newId, ItemReviewState.UNREVIEWED) }
+                                editingItemIds = editingItemIds + newId
+                                scope.launch {
+                                    val headerOffset = (if (reviewPkg.imageFile?.exists() == true) 1 else 0) + 1 + (if (reviewPkg.supplies.isNotEmpty()) 1 else 0)
+                                    listState.animateScrollToItem((headerOffset + visibleItems.size).coerceAtLeast(0))
+                                }
                             },
-                            label = { Text("Medicine Name") },
-                            placeholder = { Text("Not found, please fill") },
-                            isError = med.name.isBlank(),
-                            supportingText = if (med.name.isBlank()) { { Text("Not found, please fill", color = MaterialTheme.colorScheme.error) } } else null,
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            shape = RoundedCornerShape(12.dp)
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
+                    ) {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 16.dp, horizontal = 20.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            OutlinedTextField(
-                                value = med.strength,
-                                onValueChange = { newStrength ->
-                                    val updatedItems = reviewPkg.items.toMutableList()
-                                    val updatedMed = med.copy(strength = newStrength)
-                                    updatedItems[index] = updatedItems[index].copy(medication = updatedMed)
-                                    reviewPkg = reviewPkg.copy(items = updatedItems)
-                                },
-                                label = { Text("Strength") },
-                                placeholder = { Text("Not found, please fill") },
-                                isError = med.strength.isBlank(),
-                                supportingText = if (med.strength.isBlank()) { { Text("Not found, please fill", color = MaterialTheme.colorScheme.error) } } else null,
-                                modifier = Modifier.weight(1f),
-                                singleLine = true,
-                                shape = RoundedCornerShape(12.dp)
+                            Icon(
+                                imageVector = Icons.Default.AddCircleOutline,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
                             )
-
-                            OutlinedTextField(
-                                value = med.dose,
-                                onValueChange = { newDose ->
-                                    val updatedItems = reviewPkg.items.toMutableList()
-                                    val updatedMed = med.copy(dose = newDose)
-                                    updatedItems[index] = updatedItems[index].copy(medication = updatedMed)
-                                    reviewPkg = reviewPkg.copy(items = updatedItems)
-                                },
-                                label = { Text("Dose") },
-                                placeholder = { Text("Not found, please fill") },
-                                isError = med.dose.isBlank(),
-                                supportingText = if (med.dose.isBlank()) { { Text("Not found, please fill", color = MaterialTheme.colorScheme.error) } } else null,
-                                modifier = Modifier.weight(1f),
-                                singleLine = true,
-                                shape = RoundedCornerShape(12.dp)
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "Add medicine manually",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary
                             )
                         }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            OutlinedTextField(
-                                value = med.frequency,
-                                onValueChange = { newFreq ->
-                                    val updatedItems = reviewPkg.items.toMutableList()
-                                    val updatedMed = med.copy(frequency = newFreq)
-                                    updatedItems[index] = updatedItems[index].copy(medication = updatedMed)
-                                    reviewPkg = reviewPkg.copy(items = updatedItems)
-                                },
-                                label = { Text("Frequency") },
-                                placeholder = { Text("Not found, please fill") },
-                                isError = med.frequency.isBlank(),
-                                supportingText = if (med.frequency.isBlank()) { { Text("Not found, please fill", color = MaterialTheme.colorScheme.error) } } else null,
-                                modifier = Modifier.weight(1f),
-                                singleLine = true,
-                                shape = RoundedCornerShape(12.dp)
-                            )
-
-                            OutlinedTextField(
-                                value = med.duration,
-                                onValueChange = { newDuration ->
-                                    val updatedItems = reviewPkg.items.toMutableList()
-                                    val updatedMed = med.copy(duration = newDuration)
-                                    updatedItems[index] = updatedItems[index].copy(medication = updatedMed)
-                                    reviewPkg = reviewPkg.copy(items = updatedItems)
-                                },
-                                label = { Text("Duration") },
-                                placeholder = { Text("Not found, please fill") },
-                                isError = med.duration.isBlank(),
-                                supportingText = if (med.duration.isBlank()) { { Text("Not found, please fill", color = MaterialTheme.colorScheme.error) } } else null,
-                                modifier = Modifier.weight(1f),
-                                singleLine = true,
-                                shape = RoundedCornerShape(12.dp)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        OutlinedTextField(
-                            value = med.timing,
-                            onValueChange = { newTiming ->
-                                val updatedItems = reviewPkg.items.toMutableList()
-                                val updatedMed = med.copy(timing = newTiming)
-                                updatedItems[index] = updatedItems[index].copy(medication = updatedMed)
-                                reviewPkg = reviewPkg.copy(items = updatedItems)
-                            },
-                            label = { Text("Instructions / Meal Relation") },
-                            placeholder = { Text("Not found, please fill") },
-                            isError = med.timing.isBlank(),
-                            supportingText = if (med.timing.isBlank()) { { Text("Not found, please fill", color = MaterialTheme.colorScheme.error) } } else null,
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            shape = RoundedCornerShape(12.dp)
-                        )
                     }
                 }
             }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            PrimaryButton(
+                text = "Verify & Save to Regimen (${readyItems.size})",
+                icon = Icons.Default.CheckCircle,
+                enabled = readyItems.isNotEmpty(),
+                onClick = {
+                    if (unreviewedItems.isNotEmpty()) {
+                        showUnreviewedDialog = true
+                    } else {
+                        onSave(reviewPkg.copy(items = readyItems))
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 16.dp)
+            )
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
-
-        val selectedItems = reviewPkg.items.filter { checkedItemIds.contains(it.medication.id) }
-
-        PrimaryButton(
-            text = "Verify & Save to Regimen (${selectedItems.size})",
-            icon = Icons.Default.CheckCircle,
-            enabled = selectedItems.isNotEmpty(),
-            onClick = { onSave(reviewPkg.copy(items = selectedItems)) },
+        SnackbarHost(
+            hostState = snackbarHostState,
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 16.dp)
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 76.dp)
+        )
+    }
+
+    if (showUnreviewedDialog) {
+        AlertDialog(
+            onDismissRequest = { showUnreviewedDialog = false },
+            title = {
+                Text(
+                    text = "Unreviewed Items",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = "${unreviewedItems.size} item(s) haven't been reviewed. Save only the reviewed ones, or go back and check them?",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showUnreviewedDialog = false
+                        val firstUnreviewedId = unreviewedItems.firstOrNull()?.medication?.id
+                        if (firstUnreviewedId != null) {
+                            val targetIndex = visibleItems.indexOfFirst { it.medication.id == firstUnreviewedId }
+                            if (targetIndex >= 0) {
+                                scope.launch {
+                                    val headerOffset = (if (reviewPkg.imageFile?.exists() == true) 1 else 0) + 1 + (if (reviewPkg.supplies.isNotEmpty()) 1 else 0)
+                                    listState.animateScrollToItem((targetIndex + headerOffset).coerceAtLeast(0))
+                                }
+                            }
+                        }
+                    }
+                ) {
+                    Text("Review them", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showUnreviewedDialog = false
+                        if (readyItems.isNotEmpty()) {
+                            onSave(reviewPkg.copy(items = readyItems))
+                        }
+                    }
+                ) {
+                    Text("Save reviewed only")
+                }
+            }
         )
     }
 

@@ -96,12 +96,12 @@ fun HomeScreen(
 
     // Safety conflict detection
     val conflictingMeds = remember(medications) {
-        medications.filter { it.conflicts.isNotEmpty() }
+        medications.filter { it.hasRealConflict }
     }
     val hasConflicts = conflictingMeds.isNotEmpty()
     val firstConflict = conflictingMeds.firstOrNull()?.conflicts?.firstOrNull()
     val allAlerts = remember(medications) {
-        medications.flatMap { med ->
+        medications.filter { it.hasRealConflict }.flatMap { med ->
             med.conflicts.map { conflict -> Pair(med, conflict) }
         }
     }
@@ -528,20 +528,89 @@ fun HomeScreen(
             // ── 3. Medication Alerts (Listed in middle section) ────────────────
             if (allAlerts.isNotEmpty()) {
                 item {
-                    SectionHeader(
-                        title = "Medication Alerts",
-                        badgeCount = allAlerts.size,
-                        actionLabel = "Safety Center",
-                        onActionClick = onSafetyClick
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        allAlerts.forEach { (med, conflict) ->
-                            MedicationAlertCard(
-                                medicine = med,
-                                conflict = conflict,
-                                onClick = onSafetyClick
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "Medication Alerts",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onBackground
                             )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.errorContainer
+                            ) {
+                                Text(
+                                    text = "${allAlerts.size}",
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                            }
+                        }
+                        TextButton(
+                            onClick = onSafetyClick,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = if (allAlerts.size > 2) "View all (${allAlerts.size})" else "Safety Center",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        allAlerts.take(2).forEach { (med, conflict) ->
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onSafetyClick() },
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.surface,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.25f)),
+                                tonalElevation = 1.dp
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Warning,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text(
+                                        text = "${med.name}: ${conflict.finding}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Icon(
+                                        imageVector = Icons.Default.ChevronRight,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
                         }
                     }
                 }

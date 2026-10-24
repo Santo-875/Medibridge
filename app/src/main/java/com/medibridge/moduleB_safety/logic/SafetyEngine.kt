@@ -197,10 +197,11 @@ object SafetyEngine {
             }
         }
 
-        // 5. Update MedicationObject safety fields
+        val realConflicts = conflicts.filter { it.type != CONFLICT_TYPE_VERIFICATION }
+
         val updatedMedication = newMedication.copy(
             crossVerified = crossVerified,
-            conflicts = conflicts,
+            conflicts = realConflicts,
             reviewRecommended = reviewRecommended
         )
 
