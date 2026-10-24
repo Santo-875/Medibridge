@@ -12,12 +12,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-# Ensure root directory and backend directory are in sys.path
 _current_dir = Path(__file__).resolve().parent
 _root_dir = _current_dir.parent
-for _p in [_root_dir, _current_dir]:
-    if str(_p) not in sys.path:
-        sys.path.insert(0, str(_p))
+if str(_current_dir) in sys.path:
+    sys.path.remove(str(_current_dir))
+sys.path.insert(0, str(_current_dir))
+if str(_root_dir) not in sys.path:
+    sys.path.append(str(_root_dir))
 
 # ── Load environment variables from .env at startup ───────────────────────────
 _env_path = _current_dir / ".env"
