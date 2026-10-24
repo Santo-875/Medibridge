@@ -109,9 +109,21 @@ async def _warmup_ocr():
         logging.warning(f"[MediBridge] OCR warmup failed: {e}")
         ocr_ready = True
 
+async def _missed_dose_checker_loop():
+    while True:
+        try:
+            from database import SessionLocal
+            from care_router import check_and_escalate_missed_doses
+            with SessionLocal() as db:
+                check_and_escalate_missed_doses(db=db)
+        except Exception as e:
+            logging.error(f"[MediBridge] Missed dose checker error: {e}")
+        await asyncio.sleep(300)
+
 @app.on_event("startup")
 async def startup_warmup():
     asyncio.create_task(_warmup_ocr())
+    asyncio.create_task(_missed_dose_checker_loop())
 
 @app.get("/api/health")
 def get_health():

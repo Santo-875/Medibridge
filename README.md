@@ -1,190 +1,101 @@
-# MediBridge AI — Android Shell
+# MediBridge AI — Intelligent Medication Adherence & Clinical Safety Platform
 
-> **24-hour hackathon shell** | Branch: `integration` | Kotlin + Jetpack Compose + Material3
-
-A modular AI-powered medication management app. This repository is the **integration shell** — 4 teams wire their modules into this codebase.
+MediBridge is a modular, AI-powered healthcare assistant designed to bridge communication between patients, clinical prescriptions, safety validation, and caretakers.
 
 ---
 
-## 🏗️ Project Structure
+## 🏗️ Architecture & Features
 
-```
-com.medibridge/
-├── core/
-│   ├── model/          ← MedicationObject.kt  ← SHARED CONTRACT (read this first!)
-│   ├── db/             ← Room DB: MedicationEntity, MedicationDao, AppDatabase
-│   └── theme/          ← Color.kt, Type.kt, Theme.kt (MediBridgeTheme)
-│
-├── moduleA_prescription/   ← Module A: OCR + AI Extraction (STUB)
-├── moduleB_safety/         ← Module B: Drug Interaction Checker (STUB)
-├── moduleC_schedule/       ← Module C: Schedule Engine + Reminders (STUB)
-└── moduleD_shell/          ← Module D: Navigation, Home, Chatbot, Settings
-    ├── navigation/         ← Screen.kt, MediBridgeNavGraph.kt
-    ├── ui/                 ← HomeScreen, ChatbotScreen, RemindersScreen,
-    │                           ScannerScreen, SettingsScreen, MainShell
-    └── viewmodel/          ← SettingsViewModel
-```
+- **Module A (Prescription & Vision Intelligence):** Hybrid CameraX & gallery OCR scanning with LLM structuring (Gemini / Groq fallback), confidence scoring, manual verification workflows, and medical supply classification.
+- **Module B (Clinical Safety & Conflict Engine):** Multi-drug interaction screening, duplicate therapy detection, food rule validation, and contraindication flagging.
+- **Module C (Smart Scheduling & Dose Monitoring):** Time-slot reminders, 3-state adherence logging (Taken, Snoozed, Missed), and background missed-dose escalation.
+- **Module D (Shell & Caretaker Network):** Multi-profile management, invite-code caretaker linkage, synchronized patient monitoring, offline-first sync engine with SQLite/Room, and Medi AI clinical chat assistant.
+- **Backend & Sync Engine:** FastAPI asynchronous REST API, SQLite database, APScheduler / in-process missed-dose checker, multi-profile RBAC, and delta sync endpoints (`/sync/push`, `/sync/pull`).
 
 ---
 
-## 📦 MedicationObject Schema (core contract)
+## 🚀 Quick Start Guide
 
-> **All 4 modules read/write ONLY via `MedicationObject`.**  
-> Persist via `dao.upsertMedication(med.toEntity())`, restore via `entity.fromEntity()`.
+### 1. Backend Setup
 
-| Field | Type | Description | Owner |
-|-------|------|-------------|-------|
-| `id` | `String` | UUID, primary key | Module A |
-| `name` | `String` | Medicine name | Module A |
-| `strength` | `String` | e.g. "500mg" | Module A |
-| `dose` | `String` | e.g. "1 tablet" | Module A |
-| `frequency` | `String` | e.g. "Twice daily" | Module A |
-| `timing` | `String` | e.g. "After breakfast" | Module A |
-| `duration` | `String` | e.g. "30 days" | Module A |
-| `confidence` | `Float` | 0.0–1.0 AI confidence | Module A |
-| `needsVerification` | `Boolean` | True if confidence < 0.80 | Module A |
-| `verifiedByUser` | `Boolean` | User confirmed | Module D |
-| `crossVerified` | `Boolean` | Module B ran safety check | Module B |
-| `conflicts` | `List<MedicationConflict>` | Drug interactions found | Module B |
-| `reviewRecommended` | `Boolean` | Doctor review suggested | Module B |
-| `schedule` | `List<ScheduleSlot>` | Daily dose schedule | Module C |
-| `adherence` | `List<AdherenceRecord>` | Dose-taken log | Module C/D |
-| `summary` | `String` | Patient-readable summary | Module A/D |
-| `sideEffects` | `List<String>` | Known side effects | Module A |
-| `visibleTo` | `List<String>` | Role access control | Future |
-| `imageUrl` | `String?` | Prescription image URL | Module A |
+**Prerequisites:** Python 3.10+
 
-### Sub-types
+1. Navigate to the backend directory:
+   ```bash
+   cd backend
+   ```
 
-```kotlin
-data class MedicationConflict(
-    val withMedId: String,   // References another med's ID
-    val type: String,        // "interaction" | "duplicate" | "contraindication" | "dosage_warning"
-    val detail: String       // Human-readable explanation
-)
+2. Create and activate a virtual environment:
+   ```bash
+   python -m venv .venv
+   # Windows PowerShell:
+   .\.venv\Scripts\Activate.ps1
+   # macOS / Linux:
+   source .venv/bin/activate
+   ```
 
-data class ScheduleSlot(
-    val time: String,        // "08:00" (24h)
-    val slot: String,        // "Morning" | "Afternoon" | "Night"
-    val withFood: Boolean
-)
+3. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-data class AdherenceRecord(
-    val date: String,        // ISO date "2024-11-01"
-    val status: String       // "taken" | "missed" | "snoozed"
-)
-```
+4. Configure environment variables (`backend/.env`):
+   ```env
+   DATABASE_URL=sqlite:///./medibridge.db
+   JWT_SECRET=your_jwt_secret_key_here
+   API_KEY=your_internal_api_key_here
+   GEMINI_API_KEY=your_gemini_api_key
+   GROQ_API_KEY=your_groq_api_key
+   SARVAM_API_KEY=your_sarvam_api_key
+   ```
 
-### Adding a new field (how to extend)
-1. Add to `MedicationObject` with a default value
-2. Add to `MedicationEntity` (as a column or JSON string)
-3. Update `toEntity()` and `fromEntity()` in `MedicationObject.kt`
-4. Bump `version` in `AppDatabase.kt` and add a `Migration`
+5. Start the FastAPI backend server:
+   ```bash
+   uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+   ```
 
----
+### 2. Expose via Tunnel (for Android Device Testing)
 
-## 🧩 Module Integration Guide
-
-### Module A — Prescription Scanner
-- **Package:** `com.medibridge.moduleA_prescription`
-- **Entry point:** `ScannerScreen.kt` (replace placeholder)
-- **Output:** `MedicationObject` → persist via `dao.upsertMedication(med.toEntity())`
-- **Key TODOs:** CameraX + ML Kit OCR, confidence scoring, verification UI
-
-### Module B — Safety Cross-Verification
-- **Package:** `com.medibridge.moduleB_safety`
-- **Trigger:** After any new medication is added
-- **Read:** `dao.getAllMedications()`, check interactions
-- **Write back:** `dao.upsertMedication(entity.copy(crossVerified = true, conflicts = ...))`
-
-### Module C — Schedule Engine
-- **Package:** `com.medibridge.moduleC_schedule`
-- **Wire into:** `RemindersScreen.kt` (Taken/Missed/Snooze onClick stubs)
-- **Write adherence:** Update `AdherenceRecord` list in the entity
-- **Notifications:** Use AlarmManager or WorkManager for reminders
-
-### Module D — Shell & Chatbot
-- **Package:** `com.medibridge.moduleD_shell`
-- **Chatbot:** `ChatbotScreen.kt` → replace `dummyBotReply()` with Retrofit AI call
-- **Home:** Replace `mockMedications` with `dao.getAllMedications()` Flow
-
----
-
-## 🚀 Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| UI | Jetpack Compose + Material3 |
-| Navigation | Navigation Compose |
-| DB | Room (KSP annotation processor) |
-| State | ViewModel + StateFlow |
-| Images | Coil |
-| Network | Retrofit + OkHttp (future AI calls) |
-| Serialization | Gson (JSON fields in Room) |
-
----
-
-## 🎨 Theme
-
-All colors are defined in `core/theme/Color.kt`.  
-**Never hardcode colors** — always use `MaterialTheme.colorScheme.*`.
-
-| Role | Light | Dark |
-|------|-------|------|
-| Primary | `#0D9488` (Teal) | `#0D9488` |
-| Background | `#F8FAFC` | `#121212` |
-| On Background | `#0F172A` | `#E0E0E0` |
-| Verified | `#16A34A` (Green) | `#4ADE80` |
-| Review | `#D97706` (Amber) | `#FBBF24` |
-| Conflict | `#DC2626` (Red) | `#F87171` |
-
----
-
-## 🔧 Build & Run
-
+If testing on a physical Android phone or external network, tunnel the local backend:
 ```bash
-# Clone and switch to integration branch
-git clone https://github.com/YOUR_ORG/MediBridge.git
-cd MediBridge
-git checkout integration
-
-# Open in Android Studio Hedgehog or later
-# Build → Run on emulator (API 26+)
+ngrok http 8000
 ```
+Update the base URL in `app/src/main/java/com/medibridge/core/network/ApiConstants.kt` or `local.properties` with your assigned ngrok URL or static domain.
 
-**Requirements:**
-- Android Studio Hedgehog 2023.1.1+
-- JDK 11+
-- Android SDK API 35
-- Gradle 8.7
+### 3. Android App Setup
 
----
+**Prerequisites:** Android Studio Ladybug / Hedgehog or newer, JDK 17+, Android SDK API 35.
 
-## 📁 Navigation Routes
+1. Open the project root in Android Studio.
+2. Build debug APK from command line:
+   ```bash
+   # Windows:
+   .\gradlew.bat assembleDebug
 
-```kotlin
-Screen.Home       → "home"       (bottom nav)
-Screen.Reminders  → "reminders"  (bottom nav)
-Screen.Settings   → "settings"   (bottom nav)
-Screen.Scanner    → "scanner"    (from Home top bar icon)
-Screen.Chatbot    → "chatbot"    (from Home FAB "Medi")
-```
-
-To add a new module screen:
-1. Add `object MyScreen : Screen("my_screen")` to `Screen.kt`
-2. Add `composable(Screen.MyScreen.route) { MyScreen(...) }` to `MediBridgeNavGraph.kt`
+   # macOS / Linux:
+   ./gradlew assembleDebug
+   ```
+3. The compiled APK is generated at:
+   `app/build/outputs/apk/debug/app-debug.apk`
 
 ---
 
-## 👥 Team
+## 🔔 Missed-Dose Alerts & Caretaker Escalation
 
-| Module | Owner | Status |
-|--------|-------|--------|
-| Shell (D) | — | ✅ Shell built |
-| Prescription (A) | — | 🔲 Stub ready |
-| Safety (B) | — | 🔲 Stub ready |
-| Schedule (C) | — | 🔲 Stub ready |
+1. **Automatic Detection:** The backend runs a background task every 5 minutes checking for scheduled doses that are pending for 30+ minutes past their scheduled time.
+2. **Escalation:** An in-system `MISSED_DOSE` notification is recorded for all active caretakers linked to that patient profile.
+3. **Delivery:** The caretaker device receives notifications via `/sync/pull`, alerting the caretaker with a prominent home card, a tray item, and a local high-priority alert.
+4. **FCM Push (Optional):** To enable remote push via Firebase Cloud Messaging, place your `google-services.json` in `app/` and register tokens via `/devices`.
 
 ---
 
-*MediBridge AI — Hackathon 2024 · Branch: `integration`*
+## 🧪 Testing & Verification
+
+- **Backend Unit Tests:**
+  ```bash
+  pytest backend/tests/
+  ```
+- **Android Unit Tests:**
+  ```bash
+  .\gradlew.bat testDebugUnitTest
+  ```

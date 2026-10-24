@@ -207,7 +207,7 @@ def check_and_escalate_missed_doses(
             CareLink.profile_id == log.profile_id,
             CareLink.status == "active",
             CareLink.deleted_at.is_(None),
-            CareLink.permission.in_(["alerts", "manage", "owner"])
+            CareLink.permission.in_(["alerts", "manage", "owner", "view"])
         ).all()
 
         for cl in care_links:

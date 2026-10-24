@@ -1,8 +1,13 @@
 package com.medibridge.core.sync
 
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import androidx.core.app.NotificationCompat
+import com.medibridge.MainActivity
 import com.medibridge.core.db.*
 import com.medibridge.core.network.*
 import com.medibridge.core.session.UserSessionManager
@@ -422,6 +427,9 @@ class SyncRepository private constructor(private val context: Context) {
                         synced = true
                     )
                     db.notificationDao().insertNotification(entity)
+                    if (existing == null && !n.isRead && n.type == "MISSED_DOSE") {
+                        showLocalMissedDoseNotification(n.message, n.id)
+                    }
                 }
             }
 
@@ -469,6 +477,31 @@ class SyncRepository private constructor(private val context: Context) {
             } catch (_: Exception) {
                 null
             }
+        }
+    }
+
+    private fun showLocalMissedDoseNotification(message: String, notifId: String) {
+        try {
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+            val intent = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val pendingIntent = PendingIntent.getActivity(
+                context,
+                notifId.hashCode(),
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val builder = NotificationCompat.Builder(context, "medication_reminders")
+                .setSmallIcon(android.R.drawable.ic_dialog_alert)
+                .setContentTitle("Missed Dose Alert")
+                .setContentText(message)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                .setContentIntent(pendingIntent)
+            nm.notify(notifId.hashCode(), builder.build())
+        } catch (_: Exception) {
         }
     }
 

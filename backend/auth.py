@@ -135,14 +135,22 @@ def require_profile_access(
     return profile
 
 def get_accessible_profile_ids(user: User, db: Session) -> List[str]:
-    """Prototype mode: Return accessible profile IDs or auto-provision one."""
     owned = db.query(Profile.id).filter(
         Profile.owner_user_id == user.id,
         Profile.deleted_at.is_(None)
     ).all()
+    owned_ids = [p[0] for p in owned]
 
-    if owned:
-        return [p[0] for p in owned]
+    care_links = db.query(CareLink.profile_id).filter(
+        CareLink.caretaker_user_id == user.id,
+        CareLink.status == "active",
+        CareLink.deleted_at.is_(None)
+    ).all()
+    care_ids = [c[0] for c in care_links]
+
+    accessible = list(dict.fromkeys(owned_ids + care_ids))
+    if accessible:
+        return accessible
 
     # Return all non-deleted profiles in system
     all_profiles = db.query(Profile.id).filter(Profile.deleted_at.is_(None)).all()

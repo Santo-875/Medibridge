@@ -8,6 +8,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -72,6 +73,10 @@ fun HomeScreen(
     }
     val allDoseLogs by db.doseLogDao().getDoseLogsForProfile(activeProfileId).collectAsState(initial = emptyList())
     val unreadNotificationCount by db.notificationDao().getUnreadCount().collectAsState(initial = 0)
+    val allNotifications by db.notificationDao().getAllNotifications().collectAsState(initial = emptyList())
+    val missedDoseAlerts = remember(allNotifications) {
+        allNotifications.filter { it.type == "MISSED_DOSE" && !it.isRead }
+    }
     val scheduleViewModel: ScheduleViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
     val todayReminders by scheduleViewModel.reminders.collectAsState(initial = emptyList())
 
@@ -370,8 +375,89 @@ fun HomeScreen(
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
+            items(missedDoseAlerts, key = { "missed_alert_${it.id}" }) { alert ->
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.9f),
+                    border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.error)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Text(
+                                text = "Missed Dose Alert",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        db.notificationDao().markRead(alert.id)
+                                    }
+                                },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Dismiss",
+                                    tint = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
 
-            // ── 1. Next Dose Hero Card OR Empty State ─────────────────────────
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Text(
+                            text = alert.message,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            FilledTonalButton(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        db.notificationDao().markRead(alert.id)
+                                    }
+                                },
+                                colors = ButtonDefaults.filledTonalButtonColors(
+                                    containerColor = MaterialTheme.colorScheme.error,
+                                    contentColor = MaterialTheme.colorScheme.onError
+                                ),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                            ) {
+                                Text(
+                                    text = "Acknowledge",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             if (medications.isEmpty()) {
                 item {
                     EmptyState(
@@ -702,46 +788,85 @@ fun HomeScreen(
                     .padding(horizontal = 20.dp)
                     .padding(bottom = 36.dp, top = 8.dp)
             ) {
-                Text(
-                    text = "Notifications & Reminders",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Notifications & Reminders",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    if (allNotifications.any { !it.isRead }) {
+                        TextButton(
+                            onClick = {
+                                coroutineScope.launch {
+                                    db.notificationDao().markAllRead()
+                                }
+                            }
+                        ) {
+                            Text("Mark all read")
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.height(14.dp))
 
-                val notifications by db.notificationDao().getAllNotifications().collectAsState(initial = emptyList())
-                if (notifications.isEmpty()) {
+                if (allNotifications.isEmpty()) {
                     EmptyState(
                         icon = Icons.Default.CheckCircle,
                         title = "All Caught Up",
                         subtitle = "You have no unread notifications or missed doses."
                     )
                 } else {
-                    notifications.take(5).forEach { notif ->
+                    allNotifications.take(8).forEach { notif ->
+                        val isMissed = notif.type == "MISSED_DOSE"
                         Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 4.dp),
                             shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                            color = if (!notif.isRead && isMissed) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.85f)
+                            else if (notif.isRead) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f),
+                            border = if (!notif.isRead && isMissed) BorderStroke(1.dp, MaterialTheme.colorScheme.error) else null
                         ) {
                             Row(
                                 modifier = Modifier.padding(12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.Notifications,
+                                    imageVector = if (isMissed) Icons.Default.Warning else Icons.Default.Notifications,
                                     contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
+                                    tint = if (isMissed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Text(
                                     text = notif.message,
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurface
+                                    fontWeight = if (!notif.isRead) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (!notif.isRead && isMissed) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.weight(1f)
                                 )
+                                if (!notif.isRead) {
+                                    IconButton(
+                                        onClick = {
+                                            coroutineScope.launch {
+                                                db.notificationDao().markRead(notif.id)
+                                            }
+                                        },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = "Mark read",
+                                            modifier = Modifier.size(16.dp),
+                                            tint = if (isMissed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
